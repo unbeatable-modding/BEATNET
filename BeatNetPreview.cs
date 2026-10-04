@@ -11,8 +11,8 @@ internal sealed class BeatNetPreview : IDisposable
 {
     private Sound sound;
     private Channel channel;
-    private FMOD.Studio.Bus musicBus;
-    private bool busLocked;
+    internal readonly BeatNetBus Bus = new();
+    private bool busHeld;
     private bool starting;
     private bool pausedMusic;
     private bool wasPaused;
@@ -28,7 +28,7 @@ internal sealed class BeatNetPreview : IDisposable
         var result = RuntimeManager.CoreSystem.createStream(url.AbsoluteUri, MODE.NONBLOCKING | MODE._2D, out sound);
         if (result != RESULT.OK)
         {
-            Fail();
+            Fail(result, "open");
             return;
         }
         starting = true;
@@ -46,36 +46,35 @@ internal sealed class BeatNetPreview : IDisposable
             var result = sound.getOpenState(out var state, out _, out _, out _);
             if (result != RESULT.OK || state == OPENSTATE.ERROR || Time.unscaledTime >= deadline)
             {
-                Fail();
+                Fail(result, "load");
                 return;
             }
             if (state != OPENSTATE.READY)
             {
                 return;
             }
-            musicBus = RuntimeManager.GetBus("bus:/music");
-            if (musicBus.lockChannelGroup() != RESULT.OK)
+            result = Bus.Acquire(out var group);
+            if (result != RESULT.OK)
             {
-                Fail();
+                Fail(result, "music bus");
                 return;
             }
-            busLocked = true;
-            RuntimeManager.StudioSystem.flushCommands();
-            if (musicBus.getChannelGroup(out var group) != RESULT.OK)
-            {
-                Fail();
-                return;
-            }
+            busHeld = true;
             result = RuntimeManager.CoreSystem.playSound(sound, group, true, out channel);
             if (result != RESULT.OK)
             {
-                Fail();
+                Fail(result, "play");
                 return;
             }
             wasPaused = ArcadeBGMManager.Paused;
             pausedMusic = ArcadeBGMManager.Instance != null;
             ArcadeBGMManager.Instance?.PauseSongPreview(true);
-            channel.setPaused(false);
+            result = channel.setPaused(false);
+            if (result != RESULT.OK)
+            {
+                Fail(result, "resume");
+                return;
+            }
             starting = false;
         }
         else if (channel.isPlaying(out var playing) != RESULT.OK || !playing)
@@ -84,9 +83,10 @@ internal sealed class BeatNetPreview : IDisposable
         }
     }
 
-    private void Fail()
+    private void Fail(RESULT result, string stage)
     {
         Stop();
+        CustomSongLoader.Logger?.LogWarning($"preview {stage} failed {result}");
         Error = "Cannot play preview / try again";
     }
 
@@ -111,10 +111,10 @@ internal sealed class BeatNetPreview : IDisposable
                 released.release();
             }
         }
-        if (busLocked)
+        if (busHeld)
         {
-            musicBus.unlockChannelGroup();
-            busLocked = false;
+            Bus.Release();
+            busHeld = false;
         }
         starting = false;
         if (pausedMusic)

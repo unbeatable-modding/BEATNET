@@ -25,6 +25,11 @@ internal sealed class BeatmapEntry
     public Dictionary<string, int> Levels { get; set; } = new();
     public Dictionary<string, string> DifficultyLabels { get; set; } = new();
     public BeatmapPreview? Preview { get; set; }
+    public string? Cover { get; set; }
+    [JsonIgnore]
+    public string? CoverPath { get; set; }
+    [JsonIgnore]
+    public string CoverStamp { get; set; } = string.Empty;
     [JsonIgnore]
     public string LocalPath { get; set; } = string.Empty;
     [JsonIgnore]

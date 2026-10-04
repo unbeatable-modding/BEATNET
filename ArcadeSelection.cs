@@ -17,9 +17,12 @@ internal static class ArcadeSelection
     private static ConfigEntry<string>? song;
     private static ConfigEntry<string>? category;
     private static ConfigEntry<string>? difficulty;
+    private static ConfigEntry<bool>? library;
     private static bool restoring;
     private static bool dirty;
     private static DateTime saveAt;
+
+    internal static bool Library => library?.Value ?? false;
 
     internal static ConfigFile OpenConfig(string folder)
     {
@@ -38,6 +41,18 @@ internal static class ArcadeSelection
         config = settings;
         config.SaveOnConfigSet = false;
         logger = log;
+        library = config.Bind("Beatnet", "Library", false);
+    }
+
+    internal static void SaveLibrary(bool value)
+    {
+        if (library == null || library.Value == value)
+        {
+            return;
+        }
+        library.Value = value;
+        dirty = true;
+        Save();
     }
 
     private static void LoadProfile(string profile)

@@ -78,6 +78,8 @@ internal sealed class BeatNetUi : IDisposable
             }
             break;
         }
+        fonts[BeatNetFont.Display] = FindFont(available, "RubikMonoOne-Regular SDF HQ",
+            FindFont(available, "RubikMonoOne-Regular SDF", fonts[BeatNetFont.Score]));
         foreach (var scrollbar in Resources.FindObjectsOfTypeAll<Scrollbar>())
         {
             if (scrollbar.name == "Scrollbar Vertical" && scrollbar.transform.parent?.name == "Scores"
@@ -114,19 +116,23 @@ internal sealed class BeatNetUi : IDisposable
             {
                 material.shader = shader;
             }
-            material.SetColor("_FaceColor", role == BeatNetFont.Rank ? new Color(1f, 1f, 1f, 0f) : Color.white);
-            if (role == BeatNetFont.Rank)
+            material.SetColor("_FaceColor", role == BeatNetFont.Rank || role == BeatNetFont.Display ? new Color(1f, 1f, 1f, 0f) : Color.white);
+            if (role == BeatNetFont.Rank || role == BeatNetFont.Display)
             {
                 material.SetColor("_OutlineColor", ColorFor(BeatNetColor.Text));
                 if (material.GetFloat("_OutlineWidth") == 0f)
                 {
-                    material.SetFloat("_OutlineWidth", 0.165f);
+                    material.SetFloat("_OutlineWidth", role == BeatNetFont.Display ? 0.10f : 0.165f);
                 }
                 material.EnableKeyword("OUTLINE_ON");
             }
         }
         text.font = font;
         text.fontSharedMaterial = material;
+        if (role == BeatNetFont.Display)
+        {
+            text.fontStyle = FontStyles.Italic;
+        }
     }
 
     internal IEnumerator PrepareShaders()
@@ -172,6 +178,10 @@ internal sealed class BeatNetUi : IDisposable
         if (materials.TryGetValue(BeatNetFont.Rank, out var rank))
         {
             rank.SetColor("_OutlineColor", ColorFor(BeatNetColor.Text));
+        }
+        if (materials.TryGetValue(BeatNetFont.Display, out var display))
+        {
+            display.SetColor("_OutlineColor", ColorFor(BeatNetColor.Text));
         }
         foreach (var item in graphics)
         {

@@ -19,7 +19,11 @@ namespace BEATNET;
 public sealed class BeatNetPanel : MonoBehaviour
 {
     private const int PageSize = 15;
-    private const float ListWidth = 800f;
+    private const float ListWidth = 842f;
+    private const float DetailLeft = 914f;
+    private const float DetailSize = 686f;
+    private const float TextLeft = 942f;
+    private const float TextWidth = 630f;
     private readonly BeatNetFrames pageFrames = new();
     private readonly BeatNetFrames detailFrames = new();
     private readonly List<Button> rows = new();
@@ -31,6 +35,14 @@ public sealed class BeatNetPanel : MonoBehaviour
     private readonly List<TextMeshProUGUI> difficultyLevels = new();
     private readonly List<TextMeshProUGUI> levelLabels = new();
     private readonly List<Image> rowMarkers = new();
+    private BeatNetRhythm rhythm = null!;
+    private float coverAfter;
+    private BeatNetCovers covers = null!;
+    private RawImage detailCover = null!;
+    private BeatNetFade detailCoverFade = null!;
+    private int downloadVersion;
+    private string downloadStamp = string.Empty;
+    private string scorePath = string.Empty;
     private readonly List<EventSystem> eventSystems = new();
     private readonly List<Button> difficultyChoices = new();
     private readonly List<BeatNetFade> rowFades = new();
@@ -68,8 +80,11 @@ public sealed class BeatNetPanel : MonoBehaviour
     private TextMeshProUGUI supportedRight = null!;
     private TextMeshProUGUI supportedHeading = null!;
     private TextMeshProUGUI pageLabel = null!;
+    private TextMeshProUGUI heading = null!;
+    private TextMeshProUGUI slogan = null!;
+    private bool sloganAligned;
     private TextMeshProUGUI title = null!;
-    private TextMeshProUGUI description = null!;
+    private TextMeshProUGUI artist = null!;
     private TextMeshProUGUI mapper = null!;
     private TextMeshProUGUI highscore = null!;
     private TextMeshProUGUI rank = null!;
@@ -113,7 +128,6 @@ public sealed class BeatNetPanel : MonoBehaviour
     private Action? finish;
     private string query = string.Empty;
     private volatile string progress = string.Empty;
-    private volatile float downloadProgress;
     private bool installing;
     private bool reloadNeeded;
     private int closeFrame;
@@ -172,6 +186,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         scaler.matchWidthOrHeight = 0.5f;
         root.AddComponent<Image>();
         var panel = root.AddComponent<BeatNetPanel>();
+        panel.library = ArcadeSelection.Library;
         panel.canvas = canvas;
         panel.scaler = scaler;
         panel.events = root.AddComponent<EventSystem>();
@@ -195,6 +210,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         }
         panel.Build(label, background, back, number);
         panel.installer = new BeatmapInstaller(Application.persistentDataPath);
+        panel.covers = new BeatNetCovers(Application.persistentDataPath);
         return panel;
     }
 
@@ -219,20 +235,23 @@ public sealed class BeatNetPanel : MonoBehaviour
             }
             Close();
         });
-        var heading = ui.Text(window, "BEATNET", 72f, 340f, 20f, 960f, 94f);
+        heading = ui.Text(window, "BEATNET", 72f, 340f, 34f, 960f, 84f);
         heading.alignment = TextAlignmentOptions.Center;
-        heading.fontStyle = FontStyles.Bold;
+        heading.fontStyle = FontStyles.Italic;
         ui.Font(heading, BeatNetFont.Display);
         heading.overflowMode = TextOverflowModes.Overflow;
-        exploreTab = ui.Button(window, "Explore", 612f, 120f, 200f, 48f, true);
+        slogan = ui.Text(window, "search beatmaps. online.", 13f, 530f, 26f, 574f, 22f, BeatNetColor.Text);
+        slogan.alignment = TextAlignmentOptions.Right;
+        slogan.characterSpacing = 4f;
+        exploreTab = ui.Button(window, "Explore", 612f, 132f, 200f, 48f, true);
         ((BeatNetControl)exploreTab).Sound = BeatNetSound.None;
         exploreTab.onClick.AddListener(() => SetLibrary(false));
-        libraryTab = ui.Button(window, "Library", 828f, 120f, 200f, 48f);
+        libraryTab = ui.Button(window, "Library", 828f, 132f, 200f, 48f);
         ((BeatNetControl)libraryTab).Sound = BeatNetSound.None;
         libraryTab.onClick.AddListener(() => SetLibrary(true));
-        leftPrompt = ui.Text(window, "LB", 24f, 526f, 120f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
+        leftPrompt = ui.Text(window, "LB", 24f, 526f, 132f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
         leftPrompt.alignment = TextAlignmentOptions.Center;
-        rightPrompt = ui.Text(window, "RB", 24f, 1044f, 120f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
+        rightPrompt = ui.Text(window, "RB", 24f, 1044f, 132f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
         rightPrompt.alignment = TextAlignmentOptions.Center;
         leftPrompt.gameObject.SetActive(controller);
         rightPrompt.gameObject.SetActive(controller);
@@ -243,7 +262,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         content.SetParent(clip, false);
         content.anchoredPosition = new Vector2(0f, 196f);
         tabs = BeatNetTabs.Create(content);
-        search = ui.Search(content, 40f, 214f, 632f, 58f);
+        search = ui.Search(content, 40f, 214f, 674f, 58f);
         search.onValueChanged.AddListener(_ =>
         {
             if (search.isFocused)
@@ -258,17 +277,17 @@ public sealed class BeatNetPanel : MonoBehaviour
             Search();
         });
         controls.Add(search);
-        var find = ui.Button(content, "Search", 688f, 214f, 152f, 58f, true);
+        var find = ui.Button(content, "Search", 730f, 214f, 152f, 58f, true);
         ((BeatNetControl)find).Sound = BeatNetSound.None;
         find.onClick.AddListener(Search);
         controls.Add(find);
         controls.Add(exploreTab);
         controls.Add(libraryTab);
-        countLabel = ui.Text(content, "", 17f, 40f, 286f, 800f, 30f, BeatNetColor.Muted);
+        countLabel = ui.Text(content, "", 17f, 40f, 286f, ListWidth, 30f, BeatNetColor.Muted);
         countLabel.alignment = TextAlignmentOptions.Right;
-        list = ui.List(content, 40f, 326f, ListWidth, 488f);
+        list = ui.List(content, 40f, 326f, ListWidth, 508f);
         listArea = list.viewport;
-        empty = ui.Text(listArea, "Loading beatmaps", 27f, 28f, 120f, 744f, 180f, BeatNetColor.Muted);
+        empty = ui.Text(listArea, "Loading beatmaps", 27f, 28f, 120f, ListWidth - 56f, 180f, BeatNetColor.Muted);
         empty.alignment = TextAlignmentOptions.Center;
         empty.textWrappingMode = TextWrappingModes.Normal;
         for (var index = 0; index < PageSize; index++)
@@ -294,47 +313,51 @@ public sealed class BeatNetPanel : MonoBehaviour
             controls.Add(row);
             row.gameObject.SetActive(false);
         }
-        previous = ui.Button(content, "< Previous", 40f, 832f, 164f, 48f);
+        previous = ui.Button(content, "< Previous", 40f, 852f, 164f, 48f);
         ((BeatNetControl)previous).Sound = BeatNetSound.None;
         previous.onClick.AddListener(() => ChangePage(-1));
         controls.Add(previous);
-        pageLabel = ui.Text(content, "", 18f, 220f, 832f, 440f, 48f, BeatNetColor.Muted);
+        pageLabel = ui.Text(content, "", 18f, 382f, 852f, 158f, 48f, BeatNetColor.Muted);
         pageLabel.alignment = TextAlignmentOptions.Center;
-        next = ui.Button(content, "Next >", 676f, 832f, 164f, 48f);
+        next = ui.Button(content, "Next >", 718f, 852f, 164f, 48f);
         ((BeatNetControl)next).Sound = BeatNetSound.None;
         next.onClick.AddListener(() => ChangePage(1));
         controls.Add(next);
-        ui.Fill(content, "Details", BeatNetColor.Surface, 876f, 214f, 724f, 666f);
-        ui.Fill(content, "Accent", BeatNetColor.Accent, 876f, 214f, 724f, 3f);
-        title = ui.Text(content, "Choose a beatmap", 56f, 910f, 242f, 656f, 108f);
+        ui.Fill(content, "Details", BeatNetColor.Surface, DetailLeft, 214f, DetailSize, DetailSize);
+        detailCover = CreateCover(content, DetailLeft, 214f, DetailSize, DetailSize, 0.18f);
+        detailCoverFade = BeatNetFade.Create(detailCover.gameObject);
+        ui.Fill(content, "Accent", BeatNetColor.Accent, DetailLeft, 214f, DetailSize, 3f);
+        title = ui.Text(content, "Choose a beatmap", 52f, TextLeft, 242f, TextWidth, 96f);
         title.alignment = TextAlignmentOptions.TopLeft;
         title.enableAutoSizing = true;
-        title.fontSizeMin = 30f;
-        title.fontSizeMax = 56f;
+        title.fontSizeMin = 28f;
+        title.fontSizeMax = 52f;
         title.textWrappingMode = TextWrappingModes.Normal;
         ui.Font(title, BeatNetFont.Heading);
-        mapper = ui.Text(content, "", 26f, 910f, 356f, 656f, 36f);
-        description = ui.Text(content, "", 24f, 910f, 394f, 656f, 32f, BeatNetColor.Muted);
-        highscore = ui.Text(content, "", 90f, 910f, 380f, 520f, 120f, BeatNetColor.Text, BeatNetFont.Score);
+        artist = ui.Text(content, "", 30f, TextLeft, 344f, TextWidth, 48f, BeatNetColor.Text, BeatNetFont.Heading);
+        artist.alignment = TextAlignmentOptions.TopLeft;
+        mapper = ui.Text(content, "", 22f, TextLeft, 392f, TextWidth, 36f, BeatNetColor.Muted);
+        mapper.alignment = TextAlignmentOptions.TopLeft;
+        highscore = ui.Text(content, "", 80f, TextLeft, 424f, 472f, 80f, BeatNetColor.Text, BeatNetFont.Score);
         highscore.richText = true;
         highscore.alignment = TextAlignmentOptions.BottomLeft;
         highscore.enableAutoSizing = true;
-        highscore.fontSizeMin = 72f;
-        highscore.fontSizeMax = 90f;
+        highscore.fontSizeMin = 64f;
+        highscore.fontSizeMax = 80f;
         highscore.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
-        rank = ui.Text(content, "", 72f, 1442f, 380f, 176f, 120f, BeatNetColor.Text, BeatNetFont.Rank);
+        rank = ui.Text(content, "", 64f, 1452f, 424f, 120f, 80f, BeatNetColor.Text, BeatNetFont.Rank);
         rank.richText = true;
         rank.alignment = TextAlignmentOptions.BottomLeft;
         rank.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
-        cleared = ui.Text(content, "", 90f * 13.64f / 48.1f, 1120f, 384f, 192f, 40f, BeatNetColor.Text);
+        cleared = ui.Text(content, "", 80f * 13.64f / 48.1f, 1140f, 424f, 192f, 36f, BeatNetColor.Text);
         cleared.richText = true;
         cleared.alignment = TextAlignmentOptions.BottomRight;
         cleared.overflowMode = TextOverflowModes.Overflow;
-        ui.Fill(content, "Divider", BeatNetColor.Line, 910f, 514f, 656f, 1f);
-        supportedHeading = ui.Text(content, "DIFFICULTIES", 16f, 910f, 530f, 656f, 24f, BeatNetColor.Muted, BeatNetFont.Button);
+        ui.Fill(content, "Divider", BeatNetColor.Line, TextLeft, 514f, TextWidth, 1f);
+        supportedHeading = ui.Text(content, "DIFFICULTIES", 16f, TextLeft, 530f, TextWidth, 24f, BeatNetColor.Muted, BeatNetFont.Button);
         for (var index = 0; index < 6; index++)
         {
-            var left = index < 3 ? 910f : 1230f;
+            var left = index < 3 ? TextLeft : TextLeft + 318f;
             var top = 554f + index % 3 * 28f;
             var level = ui.Text(content, "", 26f, left, top + 6f, 48f, 28f, BeatNetColor.Text, BeatNetFont.Level);
             level.richText = true;
@@ -343,48 +366,49 @@ public sealed class BeatNetPanel : MonoBehaviour
             var levelLabel = ui.Text(level.transform, "", 8.7f, 27f, -5f, 21f, 12f, BeatNetColor.Text, BeatNetFont.Level);
             levelLabel.richText = true;
             levelLabels.Add(levelLabel);
-            var name = ui.Text(content, "", 22f, left + 56f, top + 2f, 264f, 32f, BeatNetColor.Text, BeatNetFont.Button);
+            var name = ui.Text(content, "", 21f, left + 56f, top + 2f, 250f, 32f, BeatNetColor.Text, BeatNetFont.Button);
             name.alignment = TextAlignmentOptions.MidlineLeft;
             difficultyNames.Add(name);
         }
         supported = difficultyNames[0];
         supportedRight = difficultyNames[3];
-        sizeLabel = ui.Text(content, "", 19f, 910f, 646f, 300f, 30f, BeatNetColor.Muted);
-        updateLabel = ui.Text(content, "", 18f, 1214f, 646f, 352f, 30f, BeatNetColor.Accent);
+        sizeLabel = ui.Text(content, "", 19f, TextLeft, 646f, 260f, 30f, BeatNetColor.Muted);
+        updateLabel = ui.Text(content, "", 18f, TextLeft + 278f, 646f, 352f, 30f, BeatNetColor.Accent);
         updateLabel.alignment = TextAlignmentOptions.Right;
-        difficulty = ui.Button(content, "", 910f, 676f, 656f, 48f);
+        difficulty = ui.Button(content, "", TextLeft, 696f, TextWidth, 48f);
         ((BeatNetControl)difficulty).Sound = BeatNetSound.None;
         ((BeatNetControl)difficulty).HoverSound = BeatNetSound.Hover;
         difficulty.onClick.AddListener(OpenDifficulties);
         controls.Add(difficulty);
-        install = ui.Button(content, "Download", 910f, 746f, 656f, 60f);
+        install = ui.Button(content, "Download", TextLeft, 766f, TextWidth, 60f);
         ((BeatNetControl)install).HoverSound = BeatNetSound.Hover;
         install.onClick.AddListener(Install);
         controls.Add(install);
         downloadFill = ui.Fill(install.transform, "Progress", BeatNetColor.Accent, 0f, 0f, 0f, 60f);
         downloadFill.gameObject.AddComponent<RectMask2D>();
-        downloadText = ui.Text(downloadFill.transform, "", 24f, 16f, 0f, 624f, 60f, BeatNetColor.Background, BeatNetFont.Button);
+        downloadText = ui.Text(downloadFill.transform, "", 24f, 16f, 0f, TextWidth - 32f, 60f, BeatNetColor.Background, BeatNetFont.Button);
         downloadText.alignment = TextAlignmentOptions.Center;
         downloadFill.gameObject.SetActive(false);
-        play = ui.Button(content, "Play", 910f, 746f, 656f, 60f);
+        play = ui.Button(content, "Play", TextLeft, 766f, TextWidth, 60f);
         ((BeatNetControl)play).Sound = BeatNetSound.None;
         ((BeatNetControl)play).HoverSound = BeatNetSound.Hover;
         play.onClick.AddListener(Play);
         controls.Add(play);
-        uninstall = ui.Button(content, "Uninstall", 910f, 822f, 656f, 38f);
+        uninstall = ui.Button(content, "Uninstall", TextLeft, 842f, TextWidth, 30f);
         ((BeatNetControl)uninstall).HoverSound = BeatNetSound.Hover;
         uninstall.onClick.AddListener(Uninstall);
         controls.Add(uninstall);
-        preview = ui.Button(content, "Preview", 910f, 718f, 656f, 48f);
+        preview = ui.Button(content, "Preview", TextLeft, 738f, TextWidth, 48f);
         preview.onClick.AddListener(TogglePreview);
         controls.Add(preview);
         controls.Add(close);
-        status = ui.Text(content, "", 17f, 40f, 900f, 1560f, 28f, BeatNetColor.Muted);
-        foreach (var text in new[] { title, description, mapper, highscore, rank, cleared, sizeLabel, countLabel, pageLabel, empty }.Concat(difficultyNames).Concat(difficultyLevels))
+        status = ui.Text(content, "", 15f, 40f, 286f, 680f, 30f, BeatNetColor.Muted);
+        foreach (var text in new[] { title, artist, mapper, highscore, rank, cleared, sizeLabel, countLabel, pageLabel, empty }.Concat(difficultyNames).Concat(difficultyLevels))
         {
             textFades[text] = BeatNetFade.Create(text.gameObject);
         }
         BuildLoading();
+        rhythm = new BeatNetRhythm(ui, window, content);
         BuildDifficultyPopup();
         keyboard = new BeatNetKeyboard(ui, window, search, events, Search,
             () => events.SetSelectedGameObject(controls[1].gameObject));
@@ -393,7 +417,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void BuildLoading()
     {
-        var cards = ui.Rect(listArea, "Loading", 0f, 0f, ListWidth, 488f);
+        var cards = ui.Rect(listArea, "Loading", 0f, 0f, ListWidth, 508f);
         ui.Tint(cards.gameObject.AddComponent<Image>(), BeatNetColor.Background);
         cards.GetComponent<Image>().raycastTarget = false;
         for (var index = 0; index < 6; index++)
@@ -404,7 +428,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             ui.Fill(cards, "Mapper", BeatNetColor.Surface, 22f, top + 49f, 250f, 14f);
         }
         listLoading = BeatNetLoading.Create(cards);
-        var details = ui.Rect(content, "Loading", 910f, 242f, 656f, 396f);
+        var details = ui.Rect(content, "Loading", TextLeft, 242f, TextWidth, 396f);
         ui.Tint(details.gameObject.AddComponent<Image>(), BeatNetColor.Surface);
         details.GetComponent<Image>().raycastTarget = false;
         ui.Fill(details, "Title", BeatNetColor.Highlight, 0f, 8f, 510f, 48f);
@@ -414,10 +438,10 @@ public sealed class BeatNetPanel : MonoBehaviour
         ui.Fill(details, "Difficulty", BeatNetColor.Card, 320f, 312f, 240f, 26f);
         ui.Fill(details, "Size", BeatNetColor.Card, 0f, 370f, 100f, 18f);
         detailsLoading = BeatNetLoading.Create(details);
-        var size = ui.Rect(content, "Loading size", 910f, 646f, 300f, 30f);
+        var size = ui.Rect(content, "Loading size", TextLeft, 646f, 260f, 30f);
         ui.Fill(size, "Size", BeatNetColor.Card, 0f, 6f, 100f, 18f);
         sizeLoading = BeatNetLoading.Create(size);
-        var supported = ui.Rect(content, "Loading difficulties", 910f, 554f, 656f, 90f);
+        var supported = ui.Rect(content, "Loading difficulties", TextLeft, 554f, TextWidth, 90f);
         for (var index = 0; index < 3; index++)
         {
             ui.Fill(supported, "Difficulty", BeatNetColor.Card, 0f, index * 28f + 4f, 140f, 22f);
@@ -468,7 +492,9 @@ public sealed class BeatNetPanel : MonoBehaviour
         {
             return;
         }
-        var choices = PlayableSongs().Select(item => item.BeatmapInfo.difficulty).Distinct().ToArray();
+        var choices = PlayableSongs().OrderByDescending(item => item.Beatmap.metadata.tagData.Level)
+            .ThenByDescending(item => Array.IndexOf(ArcadeSongDatabase.Instance.BeatmapIndex.Difficulties, item.BeatmapInfo.difficulty))
+            .Select(item => item.BeatmapInfo.difficulty).Distinct().ToArray();
         if (choices.Length == 0)
         {
             return;
@@ -590,7 +616,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         {
             title.text = result.Items[0].Title;
             mapper.text = result.Items[0].Creator;
-            description.text = result.Items[0].Artist;
+            artist.text = result.Items[0].Artist;
         }
     }
 
@@ -653,6 +679,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         lastDirection = 0;
         closing = false;
         tabs.Reset();
+        library = ArcadeSelection.Library;
         KeepCursor = false;
         backgroundPerspective?.Set(0.25f, 3f);
         windowPerspective.Set(1.4f);
@@ -818,6 +845,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         events.SetSelectedGameObject(null);
         CancelWork();
         audioPreview.Stop();
+        ArcadeSelection.SaveLibrary(value);
         tabs.Switch(value, () =>
         {
             library = value;
@@ -849,6 +877,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void LoadPage(int offset)
     {
+        ResetCovers();
         pageFrames.Clear();
         detailFrames.Clear();
         drawingPage = drawingDetails = false;
@@ -873,7 +902,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         pageLabel.text = string.Empty;
         countLabel.text = string.Empty;
         title.text = string.Empty;
-        mapper.text = sizeLabel.text = description.text = updateLabel.text = string.Empty;
+        mapper.text = sizeLabel.text = artist.text = updateLabel.text = string.Empty;
         supported.text = supportedRight.text = string.Empty;
         foreach (var text in difficultyNames.Concat(difficultyLevels).Concat(levelLabels))
         {
@@ -958,7 +987,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         page = result;
         empty.gameObject.SetActive(page.Items.Length == 0);
         empty.text = query.Length > 0 ? "No matching songs" : library ? "Your library is empty" : "No beatmaps available";
-        list.content.sizeDelta = new Vector2(ListWidth, Math.Max(488f, page.Items.Length * 86f - 8f));
+        list.content.sizeDelta = new Vector2(ListWidth, Math.Max(508f, page.Items.Length * 86f - 8f));
         for (var index = 0; index < page.Items.Length; index++)
         {
             var row = index;
@@ -1026,7 +1055,16 @@ public sealed class BeatNetPanel : MonoBehaviour
         rowMarkers[index].gameObject.SetActive(index == selectedIndex);
     }
 
-    private string RowState(BeatmapEntry beatmap) => HasUpdate(beatmap) ? "UPDATE AVAILABLE" : IsInstalled(beatmap) ? "INSTALLED" : string.Empty;
+    private string RowState(BeatmapEntry beatmap)
+    {
+        var downloads = Plugin.Downloads;
+        if (downloads?.Active?.Id == beatmap.Id)
+        {
+            return "DOWNLOADING";
+        }
+        var position = downloads?.Position(beatmap.Id) ?? 0;
+        return position > 0 ? $"QUEUED {position}" : HasUpdate(beatmap) ? "UPDATE AVAILABLE" : IsInstalled(beatmap) ? "INSTALLED" : string.Empty;
+    }
 
     private void SelectRow(int index, bool sound = false)
     {
@@ -1043,6 +1081,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         difficultyPopup.SetActive(false);
         var previousIndex = selectedIndex;
         selectedIndex = index;
+        coverAfter = Time.unscaledTime + 0.1f;
         playDifficulty = string.Empty;
         if (previousIndex >= 0 && previousIndex != index)
         {
@@ -1091,11 +1130,16 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void ShowDetails(BeatmapEntry beatmap)
     {
+        if (detailCover.texture != null)
+        {
+            detailCover.texture = null;
+            detailCover.gameObject.SetActive(false);
+        }
         detailFrames.Clear();
         drawingDetails = true;
         QueueText(title, beatmap.Title);
+        QueueText(artist, beatmap.Artist);
         QueueText(mapper, beatmap.Creator);
-        QueueText(description, beatmap.Artist);
         var installedSize = libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.InstalledSize ?? beatmap.InstalledSize;
         var size = library && installedSize > 0 ? installedSize : beatmap.Files.Sum(file => file.Size);
         QueueText(sizeLabel, size > 0 ? (size / 1048576f).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " MB" : string.Empty);
@@ -1137,20 +1181,26 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void LayoutDetails()
     {
-        if (!IsOpen || title.text.Length == 0 || title.havePropertiesChanged)
+        if (!IsOpen || title.text.Length == 0)
         {
             return;
         }
-        var height = Mathf.Clamp(title.GetRenderedValues(false).y, title.fontSize, 108f);
-        if (laidOutTitle == title.text && Mathf.Approximately(laidOutHeight, height))
+        if (title.havePropertiesChanged)
+        {
+            title.ForceMeshUpdate(true);
+        }
+        var height = Mathf.Clamp(title.GetRenderedValues(false).y, title.fontSize, 96f);
+        var top = 242f + height + 2f;
+        var mapperTop = -top - (artist.text.Length > 0 ? artist.rectTransform.rect.height : 0f);
+        if (laidOutTitle == title.text && Mathf.Approximately(laidOutHeight, height)
+            && Mathf.Approximately(mapper.rectTransform.anchoredPosition.y, mapperTop))
         {
             return;
         }
         laidOutTitle = title.text;
         laidOutHeight = height;
-        var top = 242f + height + 6f;
-        mapper.rectTransform.anchoredPosition = new Vector2(910f, -top);
-        description.rectTransform.anchoredPosition = new Vector2(910f, -top - 42f);
+        artist.rectTransform.anchoredPosition = new Vector2(TextLeft, -top);
+        mapper.rectTransform.anchoredPosition = new Vector2(TextLeft, mapperTop);
     }
 
     private void CheckUpdates()
@@ -1289,42 +1339,13 @@ public sealed class BeatNetPanel : MonoBehaviour
         {
             beatmap = remote;
         }
-        installing = true;
-        downloadProgress = 0f;
-        progress = "Starting download";
-        Run(async token =>
-        {
-            await installer.Install(client, beatmap, message => progress = message, token,
-                value => downloadProgress = value).ConfigureAwait(false);
-            return installer.Library();
-        }, entries =>
-        {
-            reloadNeeded = true;
-            if (IsOpen)
-            {
-                CustomSongLoader.Reload();
-                reloadNeeded = false;
-            }
-            libraryEntries = entries;
-            latest[beatmap.Id] = beatmap;
-            status.text = string.Empty;
-            if (IsOpen && library)
-            {
-                LoadPage(page.Offset);
-            }
-            else if (IsOpen)
-            {
-                for (var index = 0; index < page.Items.Length; index++)
-                {
-                    SetRowLabel(index);
-                }
-            }
-        });
+        Plugin.Downloads?.Add(beatmap);
+        RefreshControls();
     }
 
     private void Uninstall()
     {
-        if (!library || selected == null || installing || pending != null)
+        if (!library || selected == null || installing || pending != null || Plugin.Downloads?.Count > 0)
         {
             return;
         }
@@ -1500,19 +1521,29 @@ public sealed class BeatNetPanel : MonoBehaviour
         ui.Style(exploreTab, !library);
         ui.Style(libraryTab, library);
         var installRect = (RectTransform)install.transform;
-        installRect.anchoredPosition = new Vector2(910f, library ? -746f : -788f);
-        installRect.sizeDelta = new Vector2(656f, 60f);
+        installRect.anchoredPosition = new Vector2(TextLeft, library ? -766f : -812f);
+        installRect.sizeDelta = new Vector2(TextWidth, 60f);
         var installLabel = install.GetComponentInChildren<TextMeshProUGUI>(true);
         installLabel.rectTransform.sizeDelta = new Vector2(installRect.sizeDelta.x - 32f, installRect.sizeDelta.y);
         installLabel.fontSize = 24f;
-        installLabel.text = installing && !removing ? progress : update ? "Update" : installed ? "Installed" : selected == null ? "Choose a beatmap" : "Download";
+        var downloads = Plugin.Downloads;
+        var downloading = selected != null && downloads?.Active?.Id == selected.Id;
+        var queued = selected == null ? 0 : downloads?.Position(selected.Id) ?? 0;
+        installLabel.text = downloading ? downloads!.Progress : queued > 0 ? $"Queued / {queued}" : update ? "Update" : installed ? "Installed" : selected == null ? "Choose a beatmap" : "Download";
         install.gameObject.SetActive(!library || update);
-        install.interactable = selected != null && pending == null && !drawingDetails && !installing && (!installed || update);
-        downloadFill.gameObject.SetActive(installing && !removing);
+        install.interactable = selected != null && pending == null && !drawingDetails && !installing && (!installed || update)
+            && downloads?.Contains(selected.Id) != true;
+        downloadFill.gameObject.SetActive(downloading);
+        if (downloading)
+        {
+            downloadText.text = downloads!.Progress;
+            downloadFill.rectTransform.sizeDelta = new Vector2(TextWidth * Mathf.Clamp01(downloads.Fraction), 60f);
+        }
         play.gameObject.SetActive(library && !update);
+        ((RectTransform)play.transform).anchoredPosition = new Vector2(TextLeft, -766f);
         uninstall.gameObject.SetActive(library && installed);
         difficulty.gameObject.SetActive(library && installed);
-        uninstall.interactable = installed && !drawingDetails && !installing && pending == null;
+        uninstall.interactable = installed && !drawingDetails && !installing && pending == null && !(downloads?.Count > 0);
         var choices = library && installed ? PlayableSongs() : Array.Empty<ArcadeSongDatabase.BeatmapItem>();
         if (playDifficulty.Length == 0 && choices.Length > 0)
         {
@@ -1525,6 +1556,14 @@ public sealed class BeatNetPanel : MonoBehaviour
         highscore.gameObject.SetActive(currentSong != null);
         rank.gameObject.SetActive(currentSong != null);
         cleared.gameObject.SetActive(currentSong != null);
+        var path = currentSong?.Path ?? string.Empty;
+        if (path != scorePath)
+        {
+            scorePath = path;
+            textFades[highscore].Clear();
+            textFades[rank].Clear();
+            textFades[cleared].Clear();
+        }
         if (currentSong != null)
         {
             var scores = FileStorage.highscores?.GetAllScores(currentSong.Path) ?? currentSong.Highscore;
@@ -1539,15 +1578,15 @@ public sealed class BeatNetPanel : MonoBehaviour
         preview.gameObject.SetActive(!library);
         preview.interactable = !library && selected?.Preview != null && !drawingDetails && !installing && pending == null && client != null;
         play.interactable = installed && !update && !drawingDetails && !installing && pending == null && choices.Length > 0
-            && (!BeatNetClient.IsId(selected?.Id) || updateCheck == null);
+            && (!BeatNetClient.IsId(selected?.Id) || updateCheck == null) && downloads?.Contains(selected!.Id) != true;
         supported.gameObject.SetActive(true);
         supportedHeading.gameObject.SetActive(true);
-        difficulty.GetComponent<RectTransform>().anchoredPosition = new Vector2(910f, -676f);
-        difficulty.GetComponent<RectTransform>().sizeDelta = new Vector2(656f, 48f);
-        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).rectTransform.sizeDelta = new Vector2(624f, 48f);
+        difficulty.GetComponent<RectTransform>().anchoredPosition = new Vector2(TextLeft, -696f);
+        difficulty.GetComponent<RectTransform>().sizeDelta = new Vector2(TextWidth, 48f);
+        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).rectTransform.sizeDelta = new Vector2(TextWidth - 32f, 48f);
         updateLabel.text = update ? "Update available" : library && updateCheck != null ? "Checking updates"
             : library && updateFailed ? "Update check unavailable" : string.Empty;
-        updateLabel.rectTransform.anchoredPosition = new Vector2(1214f, -646f);
+        updateLabel.rectTransform.anchoredPosition = new Vector2(TextLeft + 278f, -646f);
         updateLabel.rectTransform.sizeDelta = new Vector2(352f, 30f);
         updateLabel.alignment = TextAlignmentOptions.Right;
         var focused = events.currentSelectedGameObject?.GetComponent<Selectable>();
@@ -1629,6 +1668,95 @@ public sealed class BeatNetPanel : MonoBehaviour
         }
     }
 
+    private RawImage CreateCover(Transform parent, float left, float top, float width, float height, float alpha)
+    {
+        var image = ui.Rect(parent, "Cover", left, top, width, height).gameObject.AddComponent<RawImage>();
+        image.color = new Color(1f, 1f, 1f, alpha);
+        image.raycastTarget = false;
+        image.gameObject.SetActive(false);
+        return image;
+    }
+
+    private static void ShowCover(RawImage image, BeatNetFade animation, Texture2D? texture)
+    {
+        if (texture == null || image.texture == texture)
+        {
+            return;
+        }
+        image.texture = texture;
+        var aspect = image.rectTransform.rect.width / image.rectTransform.rect.height;
+        var source = texture.width / (float)texture.height;
+        var width = source > aspect ? aspect / source : 1f;
+        var height = source < aspect ? source / aspect : 1f;
+        image.uvRect = new Rect((1f - width) * 0.5f, (1f - height) * 0.5f, width, height);
+        image.gameObject.SetActive(true);
+        animation.Show();
+    }
+
+    private BeatmapEntry CoverEntry(BeatmapEntry entry)
+    {
+        var local = libraryEntries.FirstOrDefault(item => item.Id == entry.Id);
+        return local?.CoverPath != null && (library || local.Revision.Id == entry.Revision.Id) ? local : entry;
+    }
+
+    private void UpdateCovers()
+    {
+        if (!IsOpen || closing || loadingPage || covers == null)
+        {
+            return;
+        }
+        covers.Tick();
+        if (selectedIndex >= 0 && selectedIndex < page.Items.Length && Time.unscaledTime >= coverAfter)
+        {
+            ShowCover(detailCover, detailCoverFade, covers.Get(CoverEntry(page.Items[selectedIndex])));
+        }
+    }
+
+    private void ResetCovers()
+    {
+        detailCover.texture = null;
+        detailCover.gameObject.SetActive(false);
+        covers.Reset();
+    }
+
+    private void PollDownloads()
+    {
+        var downloads = Plugin.Downloads;
+        if (downloads == null || !IsOpen || closing)
+        {
+            return;
+        }
+        if (downloads.Version != downloadVersion && pending == null && !drawingPage)
+        {
+            downloadVersion = downloads.Version;
+            if (downloads.Entries.Count > 0)
+            {
+                libraryEntries = downloads.Entries;
+            }
+            if (library)
+            {
+                LoadPage(page.Offset);
+            }
+            status.text = downloads.Error;
+        }
+        var stamp = $"{downloads.Active?.Id}/{downloads.Progress}/{downloads.Count}/{downloads.Version}";
+        if (stamp == downloadStamp)
+        {
+            return;
+        }
+        downloadStamp = stamp;
+        for (var index = 0; index < page.Items.Length; index++)
+        {
+            rowStates[index].text = RowState(page.Items[index]);
+        }
+        RefreshControls();
+        if (downloads.Count > 0)
+        {
+            status.text = $"{downloads.Active?.Title ?? "Download queued"} / {downloads.Progress}"
+                + (downloads.Count > 1 ? $" / {downloads.Count - 1} queued" : string.Empty);
+        }
+    }
+
     private void Update()
     {
         if (openingUntil > 0f && Time.frameCount > shownFrame)
@@ -1645,8 +1773,11 @@ public sealed class BeatNetPanel : MonoBehaviour
         windowPerspective.Tick();
         difficultyPerspective.Tick();
         ui.RefreshTheme();
+        rhythm.Tick();
         PollWork();
         PollUpdates();
+        PollDownloads();
+        UpdateCovers();
         try
         {
             if (pageFrames.IsPending)
@@ -1691,12 +1822,6 @@ public sealed class BeatNetPanel : MonoBehaviour
         if (installing)
         {
             status.text = removing ? progress : string.Empty;
-            if (!removing)
-            {
-                install.GetComponentInChildren<TextMeshProUGUI>(true).text = progress;
-                downloadText.text = progress;
-                downloadFill.rectTransform.sizeDelta = new Vector2(656f * Mathf.Clamp01(downloadProgress), 60f);
-            }
         }
     }
 
@@ -1707,6 +1832,20 @@ public sealed class BeatNetPanel : MonoBehaviour
             return;
         }
         LayoutDetails();
+        rhythm.LateTick();
+        if (!sloganAligned)
+        {
+            heading.ForceMeshUpdate(true);
+            var count = heading.textInfo.characterCount;
+            if (count > 0)
+            {
+                var right = heading.rectTransform.anchoredPosition.x + heading.textInfo.characterInfo[count - 1].topRight.x + 8f;
+                var position = slogan.rectTransform.anchoredPosition;
+                position.x = right - slogan.rectTransform.rect.width;
+                slogan.rectTransform.anchoredPosition = position;
+                sloganAligned = true;
+            }
+        }
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = !controller || IsTyping;
         GetComponent<GraphicRaycaster>().enabled = true;
@@ -1990,6 +2129,10 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void OnDisable()
     {
+        if (covers != null)
+        {
+            ResetCovers();
+        }
         pageFrames.Clear();
         detailFrames.Clear();
         drawingPage = drawingDetails = false;
@@ -2011,6 +2154,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void OnDestroy()
     {
+        covers?.Dispose();
         firstCancellation.Cancel();
         firstCancellation.Dispose();
         CancelWork();

@@ -26,6 +26,12 @@
     <Reference Include="Unity.TextMeshPro" HintPath="$(ManagedDirectory)/Unity.TextMeshPro.dll" Private="false" />
     <Reference Include="Newtonsoft.Json" HintPath="$(ManagedDirectory)/Newtonsoft.Json.dll" Private="false" />
   </ItemGroup>
+  <Target Name="UseGameDrawing" BeforeTargets="CoreCompile" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" Condition="'%(ReferencePathWithRefAssemblies.Filename)' == 'System.Drawing'" />
+      <ReferencePathWithRefAssemblies Include="$(ManagedDirectory)/System.Drawing.dll" Aliases="GameDrawing" Private="false" />
+    </ItemGroup>
+  </Target>
   <Target Name="ValidateGameDirectory" BeforeTargets="ResolveReferences">
     <Error Condition="'$(GameDirectory)' == ''" Text="Set GameDirectory to your UNBEATABLE installation." />
     <Error Condition="!Exists('$(ManagedDirectory)/Assembly-CSharp.dll')" Text="Assembly-CSharp.dll is missing. Set GameDirectory to your UNBEATABLE installation." />

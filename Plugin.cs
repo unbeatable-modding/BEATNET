@@ -17,10 +17,12 @@ public sealed class Plugin : BaseUnityPlugin
     private BeatNetButton? openButton;
     private float nextScan;
     private Harmony? patches;
+    internal static BeatNetDownloads? Downloads { get; private set; }
 
     private void Awake()
     {
         CustomSongLoader.Logger = Logger;
+        Downloads = new BeatNetDownloads(Application.persistentDataPath);
         var settings = ArcadeSelection.OpenConfig(Paths.ConfigPath);
         ArcadeSelection.Initialize(settings, Logger);
         settings.Save();
@@ -31,6 +33,16 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+        Downloads?.Tick();
+        if (Downloads?.NeedsReload == true
+            && ArcadeMenuStateMachine.Instance?.CurrentState?.StateName == EArcadeMenuStates.SongSelect)
+        {
+            if (ArcadeSongDatabase.Instance != null)
+            {
+                CustomSongLoader.Reload();
+                Downloads.NeedsReload = false;
+            }
+        }
         ArcadeSelection.Update();
         if (openButton != null)
         {
@@ -74,6 +86,8 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void OnDestroy()
     {
+        Downloads?.Dispose();
+        Downloads = null;
         ArcadeSelection.Save();
         patches?.UnpatchSelf();
         CustomSongLoader.Clear();

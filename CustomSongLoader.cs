@@ -30,11 +30,12 @@ internal static class CustomSongLoader
         var previous = database.SongDatabase.Values.Select(item => item.Beatmap).Distinct().ToArray();
         using var music = new BeatNetMusic();
         var preview = music.Item;
+        var listedPreview = preview != null && !music.IsBackground && database.SongDatabase.ContainsKey(preview.Path);
         try
         {
             database.LoadDatabase();
             database.RefreshSongList();
-            if (preview != null && ArcadeBGMManager.Instance != null)
+            if (preview != null && listedPreview && ArcadeBGMManager.Instance != null)
             {
                 var replacement = database.GetBeatmapItemByPath(preview.Path)
                     ?? database.SongDatabase.Values.Where(item => item.Unlocked)
@@ -54,6 +55,10 @@ internal static class CustomSongLoader
                 }
             }
             var retained = new HashSet<Beatmap>(database.SongDatabase.Values.Select(item => item.Beatmap));
+            if (!listedPreview && preview != null)
+            {
+                retained.Add(preview.Beatmap);
+            }
             foreach (var beatmap in previous)
             {
                 if (!retained.Contains(beatmap))

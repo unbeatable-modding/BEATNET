@@ -20,8 +20,8 @@ internal sealed class BeatmapInstaller
     internal BeatmapInstaller(string dataPath)
     {
         customSongs = Path.GetFullPath(Path.Combine(dataPath, "CustomSongs"));
-        songs = Path.Combine(customSongs, "BEATNET");
-        staging = Path.Combine(dataPath, "BEATNET", "staging");
+        songs = Path.Combine(customSongs, "BEATNET_beatmaps");
+        staging = Path.Combine(dataPath, "BEATNET_data", "staging");
     }
 
     internal string? InstalledRevision(string id)
@@ -139,6 +139,13 @@ internal sealed class BeatmapInstaller
     {
         CheckParents(folder);
         entry.Difficulties = ChartFiles.GetDifficulties(folder);
+        entry.CoverPath = new[] { folder }.Concat(ChartFiles.GetSongFolders(folder))
+            .Select(ChartFiles.GetCover).FirstOrDefault(path => path != null);
+        if (entry.CoverPath != null)
+        {
+            var cover = new FileInfo(entry.CoverPath);
+            entry.CoverStamp = cover.Length + "-" + cover.LastWriteTimeUtc.Ticks;
+        }
         if (entry.Title.Length == 0 || entry.Artist.Length == 0 || entry.Creator.Length == 0)
         {
             var chart = new[] { folder }.Concat(ChartFiles.GetSongFolders(folder))

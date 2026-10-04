@@ -11,6 +11,7 @@ internal sealed class BeatNetMusic : IDisposable
     private static readonly FieldInfo Current = AccessTools.Field(typeof(ArcadeBGMManager), "currentItem");
     private static readonly FieldInfo Pending = AccessTools.Field(typeof(ArcadeBGMManager), "itemToPlay");
     private static readonly FieldInfo Song = AccessTools.Field(typeof(ArcadeBGMManager), "<CurrentSong>k__BackingField");
+    private static readonly FieldInfo Background = AccessTools.Field(typeof(ArcadeBGMManager), "defaultSongPath");
     private static int holds;
     private readonly ArcadeBGMManager? manager;
     private readonly ArcadeSongDatabase.BeatmapItem? current;
@@ -19,6 +20,8 @@ internal sealed class BeatNetMusic : IDisposable
 
     internal static bool BlocksChanges => holds > 0;
     internal ArcadeSongDatabase.BeatmapItem? Item => current ?? pending;
+    internal bool IsBackground => manager != null && Item != null
+        && Item.Path == (Background.GetValue(manager) as string) + "/Beginner";
 
     internal BeatNetMusic()
     {
@@ -29,7 +32,7 @@ internal sealed class BeatNetMusic : IDisposable
         }
         current = Current.GetValue(manager) as ArcadeSongDatabase.BeatmapItem;
         pending = Pending.GetValue(manager) as ArcadeSongDatabase.BeatmapItem;
-        held = Item != null;
+        held = true;
         if (held)
         {
             holds++;

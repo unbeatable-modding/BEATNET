@@ -93,6 +93,35 @@ internal sealed class BeatNetClient : IDisposable
         }
     }
 
+    internal async Task<byte[]> Cover(BeatmapEntry beatmap, CancellationToken token)
+    {
+        var path = $"/api/beatmaps/{beatmap.Id}/revisions/{beatmap.Revision.Id}/cover";
+        if (beatmap.Cover != path || !IsId(beatmap.Id) || !IsId(beatmap.Revision.Id))
+        {
+            throw new InvalidDataException("Invalid cover URL");
+        }
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        using var response = await GetResponse(path, timeout.Token).ConfigureAwait(false);
+        if (response.Content.Headers.ContentLength > 98304)
+        {
+            throw new InvalidDataException("The cover is too large");
+        }
+        using var source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        using var bytes = new MemoryStream();
+        var buffer = new byte[8192];
+        int count;
+        while ((count = await source.ReadAsync(buffer, 0, buffer.Length, timeout.Token).ConfigureAwait(false)) != 0)
+        {
+            if (bytes.Length + count > 98304)
+            {
+                throw new InvalidDataException("The cover is too large");
+            }
+            bytes.Write(buffer, 0, count);
+        }
+        return bytes.ToArray();
+    }
+
     private async Task<T> ReadJson<T>(string path, CancellationToken token)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
