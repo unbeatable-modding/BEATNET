@@ -1,0 +1,2076 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using Arcade.UI;
+using Arcade.UI.SongSelect;
+using Rewired;
+using TMPro;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+namespace BEATNET;
+
+public sealed class BeatNetPanel : MonoBehaviour
+{
+    private const int PageSize = 15;
+    private const float ListWidth = 800f;
+    private readonly BeatNetFrames pageFrames = new();
+    private readonly BeatNetFrames detailFrames = new();
+    private readonly List<Button> rows = new();
+    private readonly List<Selectable> controls = new();
+    private readonly List<TextMeshProUGUI> rowLabels = new();
+    private readonly List<TextMeshProUGUI> rowDetails = new();
+    private readonly List<TextMeshProUGUI> rowStates = new();
+    private readonly List<TextMeshProUGUI> difficultyNames = new();
+    private readonly List<TextMeshProUGUI> difficultyLevels = new();
+    private readonly List<TextMeshProUGUI> levelLabels = new();
+    private readonly List<Image> rowMarkers = new();
+    private readonly List<EventSystem> eventSystems = new();
+    private readonly List<Button> difficultyChoices = new();
+    private readonly List<BeatNetFade> rowFades = new();
+    private readonly Dictionary<TextMeshProUGUI, BeatNetFade> textFades = new();
+    private BeatNetUi ui = null!;
+    private Task<BeatNetClient> clientReady = null!;
+    private BeatNetKeyboard keyboard = null!;
+    private BeatNetInput pointerInput = null!;
+    private BeatNetInputModule pointerModule = null!;
+    private GameObject? previousSelection;
+    private EventSystem? previousEvents;
+    private JeffBezosController? inputOwner;
+    private EventSystem events = null!;
+    private TMP_InputField search = null!;
+    private Button previous = null!;
+    private Button next = null!;
+    private Button install = null!;
+    private Button preview = null!;
+    private readonly BeatNetPreview audioPreview = new();
+    private Button exploreTab = null!;
+    private Button libraryTab = null!;
+    private TextMeshProUGUI leftPrompt = null!;
+    private TextMeshProUGUI rightPrompt = null!;
+    private Button play = null!;
+    private Button uninstall = null!;
+    private Button difficulty = null!;
+    private Button close = null!;
+    private GameObject difficultyPopup = null!;
+    private RectTransform difficultyDialog = null!;
+    private RectTransform difficultyList = null!;
+    private Button difficultyBack = null!;
+    private Image downloadFill = null!;
+    private TextMeshProUGUI downloadText = null!;
+    private TextMeshProUGUI supported = null!;
+    private TextMeshProUGUI supportedRight = null!;
+    private TextMeshProUGUI supportedHeading = null!;
+    private TextMeshProUGUI pageLabel = null!;
+    private TextMeshProUGUI title = null!;
+    private TextMeshProUGUI description = null!;
+    private TextMeshProUGUI mapper = null!;
+    private TextMeshProUGUI highscore = null!;
+    private TextMeshProUGUI rank = null!;
+    private TextMeshProUGUI cleared = null!;
+    private TextMeshProUGUI sizeLabel = null!;
+    private TextMeshProUGUI updateLabel = null!;
+    private TextMeshProUGUI empty = null!;
+    private TextMeshProUGUI countLabel = null!;
+    private ScrollRect list = null!;
+    private RectTransform listArea = null!;
+    private RectTransform window = null!;
+    private RectTransform content = null!;
+    private BeatNetTabs tabs = null!;
+    private CanvasGroup fade = null!;
+    private BeatNetMotion motion = null!;
+    private BeatNetMotion difficultyMotion = null!;
+    private BeatNetPerspective? backgroundPerspective;
+    private BeatNetPerspective windowPerspective = null!;
+    private BeatNetPerspective difficultyPerspective = null!;
+    private BeatNetLoading listLoading = null!;
+    private BeatNetLoading detailsLoading = null!;
+    private BeatNetLoading sizeLoading = null!;
+    private BeatNetLoading supportedLoading = null!;
+    private bool loadingPage;
+    private CanvasScaler scaler = null!;
+    private TextMeshProUGUI status = null!;
+    private BeatNetClient? client;
+    private BeatmapInstaller installer = null!;
+    private CatalogPage page = new();
+    private BeatmapEntry? selected;
+    private List<BeatmapEntry> libraryEntries = new();
+    private Dictionary<string, BeatmapEntry> latest = new();
+    private Task<(Dictionary<string, BeatmapEntry> Entries, bool Failed)>? updateCheck;
+    private CancellationTokenSource? updateCancellation;
+    private bool library;
+    private bool updateFailed;
+    private bool removing;
+    private string playDifficulty = string.Empty;
+    private CancellationTokenSource? cancellation;
+    private Task? pending;
+    private Action? finish;
+    private string query = string.Empty;
+    private volatile string progress = string.Empty;
+    private volatile float downloadProgress;
+    private bool installing;
+    private bool reloadNeeded;
+    private int closeFrame;
+    private float nextMove;
+    private int lastDirection;
+    private int selectedIndex = -1;
+    private int shownFrame;
+    private bool controller;
+    private bool closing;
+    private bool prepared;
+    private bool openRequested;
+    private Canvas canvas = null!;
+    private bool visible;
+    private bool timedOpen;
+    private bool timedPage;
+    private bool timedDetails;
+    private bool drawingPage;
+    private bool drawingDetails;
+    private string laidOutTitle = string.Empty;
+    private float laidOutHeight;
+    private string laidOutScore = string.Empty;
+    private string laidOutRank = string.Empty;
+    private string laidOutClear = string.Empty;
+    private Task<CatalogPage>? firstPage;
+    private readonly CancellationTokenSource firstCancellation = new();
+    private float openingUntil;
+    private float longestOpeningFrame;
+    private bool cursorVisible;
+    private CursorLockMode cursorLock;
+    private Vector3 mousePosition;
+    private int screenWidth;
+    private int screenHeight;
+
+    internal bool IsOpen => prepared && visible;
+    internal bool KeepCursor { get; private set; }
+    internal bool IsTyping => IsOpen && (search.isFocused || keyboard.IsOpen);
+    internal static bool BlocksGameInput { get; private set; }
+
+    internal static BeatNetPanel Create(Transform parent, TextMeshProUGUI label, Graphic background, Button back, TextMeshProUGUI number)
+    {
+        var root = new GameObject("BEATNET.Popup", typeof(RectTransform));
+        root.SetActive(false);
+        root.layer = parent.gameObject.layer;
+        SceneManager.MoveGameObjectToScene(root, parent.gameObject.scene);
+        var canvas = root.AddComponent<Canvas>();
+        var nativeCanvas = parent.GetComponentInParent<Canvas>();
+        canvas.worldCamera = nativeCanvas.worldCamera ?? Camera.main;
+        canvas.renderMode = RenderMode.ScreenSpaceCamera;
+        canvas.planeDistance = nativeCanvas.planeDistance;
+        canvas.additionalShaderChannels = nativeCanvas.additionalShaderChannels;
+        canvas.sortingOrder = short.MaxValue;
+        root.AddComponent<GraphicRaycaster>();
+        var scaler = root.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.matchWidthOrHeight = 0.5f;
+        root.AddComponent<Image>();
+        var panel = root.AddComponent<BeatNetPanel>();
+        panel.canvas = canvas;
+        panel.scaler = scaler;
+        panel.events = root.AddComponent<EventSystem>();
+        panel.events.sendNavigationEvents = false;
+        panel.pointerModule = root.AddComponent<BeatNetInputModule>();
+        panel.pointerInput = root.AddComponent<BeatNetInput>();
+        panel.pointerModule.inputOverride = panel.pointerInput;
+        panel.clientReady = Task.Run(() => new BeatNetClient("http://92.5.175.72"));
+        var firstToken = panel.firstCancellation.Token;
+        panel.firstPage = Task.Run(async () =>
+        {
+            var source = await panel.clientReady.ConfigureAwait(false);
+            return await source.List(string.Empty, 0, PageSize, firstToken).ConfigureAwait(false);
+        });
+        _ = panel.firstPage.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        var perspective = parent.GetComponentInParent<CanvasMousePerspective>();
+        if (perspective != null)
+        {
+            panel.backgroundPerspective = new BeatNetPerspective(perspective);
+        }
+        panel.Build(label, background, back, number);
+        panel.installer = new BeatmapInstaller(Application.persistentDataPath);
+        return panel;
+    }
+
+    private void Build(TextMeshProUGUI label, Graphic background, Button back, TextMeshProUGUI number)
+    {
+        ui = new BeatNetUi(label, background);
+        ui.Tint(GetComponent<Image>(), BeatNetColor.Backdrop);
+        window = ui.Rect(transform, "Window", 0f, 0f, 1640f, 940f);
+        window.anchorMin = window.anchorMax = new Vector2(0.5f, 0.5f);
+        window.pivot = new Vector2(0.5f, 0.5f);
+        window.anchoredPosition = Vector2.zero;
+        windowPerspective = new BeatNetPerspective(window.gameObject.AddComponent<CanvasMousePerspective>());
+        ui.Tint(window.gameObject.AddComponent<Image>(), BeatNetColor.Background);
+        fade = gameObject.AddComponent<CanvasGroup>();
+        motion = BeatNetMotion.Create(gameObject, window, visibility: SetVisible);
+        close = ui.Back(window, back, number);
+        close.onClick.AddListener(() =>
+        {
+            if (pointerInput.GetMouseButtonUp(0) || pointerInput.GetMouseButtonDown(0))
+            {
+                UseKeyboard();
+            }
+            Close();
+        });
+        var heading = ui.Text(window, "BEATNET", 72f, 340f, 20f, 960f, 94f);
+        heading.alignment = TextAlignmentOptions.Center;
+        heading.fontStyle = FontStyles.Bold;
+        ui.Font(heading, BeatNetFont.Display);
+        heading.overflowMode = TextOverflowModes.Overflow;
+        exploreTab = ui.Button(window, "Explore", 612f, 120f, 200f, 48f, true);
+        ((BeatNetControl)exploreTab).Sound = BeatNetSound.None;
+        exploreTab.onClick.AddListener(() => SetLibrary(false));
+        libraryTab = ui.Button(window, "Library", 828f, 120f, 200f, 48f);
+        ((BeatNetControl)libraryTab).Sound = BeatNetSound.None;
+        libraryTab.onClick.AddListener(() => SetLibrary(true));
+        leftPrompt = ui.Text(window, "LB", 24f, 526f, 120f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
+        leftPrompt.alignment = TextAlignmentOptions.Center;
+        rightPrompt = ui.Text(window, "RB", 24f, 1044f, 120f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
+        rightPrompt.alignment = TextAlignmentOptions.Center;
+        leftPrompt.gameObject.SetActive(controller);
+        rightPrompt.gameObject.SetActive(controller);
+        ui.Fill(window, "Divider", BeatNetColor.Line, 40f, 188f, 1560f, 1f);
+        content = ui.Rect(window, "Content", 0f, 0f, 1640f, 940f);
+        var clip = ui.Rect(window, "Content mask", 0f, 196f, 1640f, 744f);
+        clip.gameObject.AddComponent<RectMask2D>();
+        content.SetParent(clip, false);
+        content.anchoredPosition = new Vector2(0f, 196f);
+        tabs = BeatNetTabs.Create(content);
+        search = ui.Search(content, 40f, 214f, 632f, 58f);
+        search.onValueChanged.AddListener(_ =>
+        {
+            if (search.isFocused)
+            {
+                BeatNetSounds.Play(BeatNetSound.Down);
+            }
+        });
+        search.onSubmit.AddListener(_ =>
+        {
+            search.DeactivateInputField();
+            events.SetSelectedGameObject(controls[1].gameObject);
+            Search();
+        });
+        controls.Add(search);
+        var find = ui.Button(content, "Search", 688f, 214f, 152f, 58f, true);
+        ((BeatNetControl)find).Sound = BeatNetSound.None;
+        find.onClick.AddListener(Search);
+        controls.Add(find);
+        controls.Add(exploreTab);
+        controls.Add(libraryTab);
+        countLabel = ui.Text(content, "", 17f, 40f, 286f, 800f, 30f, BeatNetColor.Muted);
+        countLabel.alignment = TextAlignmentOptions.Right;
+        list = ui.List(content, 40f, 326f, ListWidth, 488f);
+        listArea = list.viewport;
+        empty = ui.Text(listArea, "Loading beatmaps", 27f, 28f, 120f, 744f, 180f, BeatNetColor.Muted);
+        empty.alignment = TextAlignmentOptions.Center;
+        empty.textWrappingMode = TextWrappingModes.Normal;
+        for (var index = 0; index < PageSize; index++)
+        {
+            var row = ui.Button(list.content, "", 0f, index * 86f, ListWidth, 78f);
+            ((BeatNetControl)row).Sound = BeatNetSound.None;
+            var text = row.GetComponentInChildren<TextMeshProUGUI>(true);
+            text.alignment = TextAlignmentOptions.Left;
+            text.fontSize = 25f;
+            ui.Font(text, BeatNetFont.Button);
+            text.rectTransform.anchoredPosition = new Vector2(22f, -4f);
+            text.rectTransform.sizeDelta = new Vector2(ListWidth - 48f, 39f);
+            rowDetails.Add(ui.Text(row.transform, "", 18f, 22f, 43f, 510f, 27f, BeatNetColor.Muted));
+            var state = ui.Text(row.transform, "", 15f, 530f, 43f, ListWidth - 554f, 27f, BeatNetColor.Accent);
+            state.alignment = TextAlignmentOptions.Right;
+            rowStates.Add(state);
+            rowMarkers.Add(ui.Fill(row.transform, "Selected", BeatNetColor.Accent, 0f, 0f, 4f, 78f));
+            rowFades.Add(BeatNetFade.Create(row.gameObject));
+            var rowIndex = index;
+            row.onClick.AddListener(() => SelectRow(rowIndex, true));
+            rows.Add(row);
+            rowLabels.Add(text);
+            controls.Add(row);
+            row.gameObject.SetActive(false);
+        }
+        previous = ui.Button(content, "< Previous", 40f, 832f, 164f, 48f);
+        ((BeatNetControl)previous).Sound = BeatNetSound.None;
+        previous.onClick.AddListener(() => ChangePage(-1));
+        controls.Add(previous);
+        pageLabel = ui.Text(content, "", 18f, 220f, 832f, 440f, 48f, BeatNetColor.Muted);
+        pageLabel.alignment = TextAlignmentOptions.Center;
+        next = ui.Button(content, "Next >", 676f, 832f, 164f, 48f);
+        ((BeatNetControl)next).Sound = BeatNetSound.None;
+        next.onClick.AddListener(() => ChangePage(1));
+        controls.Add(next);
+        ui.Fill(content, "Details", BeatNetColor.Surface, 876f, 214f, 724f, 666f);
+        ui.Fill(content, "Accent", BeatNetColor.Accent, 876f, 214f, 724f, 3f);
+        title = ui.Text(content, "Choose a beatmap", 56f, 910f, 242f, 656f, 108f);
+        title.alignment = TextAlignmentOptions.TopLeft;
+        title.enableAutoSizing = true;
+        title.fontSizeMin = 30f;
+        title.fontSizeMax = 56f;
+        title.textWrappingMode = TextWrappingModes.Normal;
+        ui.Font(title, BeatNetFont.Heading);
+        mapper = ui.Text(content, "", 26f, 910f, 356f, 656f, 36f);
+        description = ui.Text(content, "", 24f, 910f, 394f, 656f, 32f, BeatNetColor.Muted);
+        highscore = ui.Text(content, "", 90f, 910f, 380f, 520f, 120f, BeatNetColor.Text, BeatNetFont.Score);
+        highscore.richText = true;
+        highscore.alignment = TextAlignmentOptions.BottomLeft;
+        highscore.enableAutoSizing = true;
+        highscore.fontSizeMin = 72f;
+        highscore.fontSizeMax = 90f;
+        highscore.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
+        rank = ui.Text(content, "", 72f, 1442f, 380f, 176f, 120f, BeatNetColor.Text, BeatNetFont.Rank);
+        rank.richText = true;
+        rank.alignment = TextAlignmentOptions.BottomLeft;
+        rank.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
+        cleared = ui.Text(content, "", 90f * 13.64f / 48.1f, 1120f, 384f, 192f, 40f, BeatNetColor.Text);
+        cleared.richText = true;
+        cleared.alignment = TextAlignmentOptions.BottomRight;
+        cleared.overflowMode = TextOverflowModes.Overflow;
+        ui.Fill(content, "Divider", BeatNetColor.Line, 910f, 514f, 656f, 1f);
+        supportedHeading = ui.Text(content, "DIFFICULTIES", 16f, 910f, 530f, 656f, 24f, BeatNetColor.Muted, BeatNetFont.Button);
+        for (var index = 0; index < 6; index++)
+        {
+            var left = index < 3 ? 910f : 1230f;
+            var top = 554f + index % 3 * 28f;
+            var level = ui.Text(content, "", 26f, left, top + 6f, 48f, 28f, BeatNetColor.Text, BeatNetFont.Level);
+            level.richText = true;
+            level.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
+            difficultyLevels.Add(level);
+            var levelLabel = ui.Text(level.transform, "", 8.7f, 27f, -5f, 21f, 12f, BeatNetColor.Text, BeatNetFont.Level);
+            levelLabel.richText = true;
+            levelLabels.Add(levelLabel);
+            var name = ui.Text(content, "", 22f, left + 56f, top + 2f, 264f, 32f, BeatNetColor.Text, BeatNetFont.Button);
+            name.alignment = TextAlignmentOptions.MidlineLeft;
+            difficultyNames.Add(name);
+        }
+        supported = difficultyNames[0];
+        supportedRight = difficultyNames[3];
+        sizeLabel = ui.Text(content, "", 19f, 910f, 646f, 300f, 30f, BeatNetColor.Muted);
+        updateLabel = ui.Text(content, "", 18f, 1214f, 646f, 352f, 30f, BeatNetColor.Accent);
+        updateLabel.alignment = TextAlignmentOptions.Right;
+        difficulty = ui.Button(content, "", 910f, 676f, 656f, 48f);
+        ((BeatNetControl)difficulty).Sound = BeatNetSound.None;
+        ((BeatNetControl)difficulty).HoverSound = BeatNetSound.Hover;
+        difficulty.onClick.AddListener(OpenDifficulties);
+        controls.Add(difficulty);
+        install = ui.Button(content, "Download", 910f, 746f, 656f, 60f);
+        ((BeatNetControl)install).HoverSound = BeatNetSound.Hover;
+        install.onClick.AddListener(Install);
+        controls.Add(install);
+        downloadFill = ui.Fill(install.transform, "Progress", BeatNetColor.Accent, 0f, 0f, 0f, 60f);
+        downloadFill.gameObject.AddComponent<RectMask2D>();
+        downloadText = ui.Text(downloadFill.transform, "", 24f, 16f, 0f, 624f, 60f, BeatNetColor.Background, BeatNetFont.Button);
+        downloadText.alignment = TextAlignmentOptions.Center;
+        downloadFill.gameObject.SetActive(false);
+        play = ui.Button(content, "Play", 910f, 746f, 656f, 60f);
+        ((BeatNetControl)play).Sound = BeatNetSound.None;
+        ((BeatNetControl)play).HoverSound = BeatNetSound.Hover;
+        play.onClick.AddListener(Play);
+        controls.Add(play);
+        uninstall = ui.Button(content, "Uninstall", 910f, 822f, 656f, 38f);
+        ((BeatNetControl)uninstall).HoverSound = BeatNetSound.Hover;
+        uninstall.onClick.AddListener(Uninstall);
+        controls.Add(uninstall);
+        preview = ui.Button(content, "Preview", 910f, 718f, 656f, 48f);
+        preview.onClick.AddListener(TogglePreview);
+        controls.Add(preview);
+        controls.Add(close);
+        status = ui.Text(content, "", 17f, 40f, 900f, 1560f, 28f, BeatNetColor.Muted);
+        foreach (var text in new[] { title, description, mapper, highscore, rank, cleared, sizeLabel, countLabel, pageLabel, empty }.Concat(difficultyNames).Concat(difficultyLevels))
+        {
+            textFades[text] = BeatNetFade.Create(text.gameObject);
+        }
+        BuildLoading();
+        BuildDifficultyPopup();
+        keyboard = new BeatNetKeyboard(ui, window, search, events, Search,
+            () => events.SetSelectedGameObject(controls[1].gameObject));
+        RefreshControls();
+    }
+
+    private void BuildLoading()
+    {
+        var cards = ui.Rect(listArea, "Loading", 0f, 0f, ListWidth, 488f);
+        ui.Tint(cards.gameObject.AddComponent<Image>(), BeatNetColor.Background);
+        cards.GetComponent<Image>().raycastTarget = false;
+        for (var index = 0; index < 6; index++)
+        {
+            var top = index * 86f;
+            ui.Fill(cards, "Card", BeatNetColor.Card, 0f, top, ListWidth, 78f);
+            ui.Fill(cards, "Title", BeatNetColor.Highlight, 22f, top + 16f, index % 2 == 0 ? 470f : 580f, 22f);
+            ui.Fill(cards, "Mapper", BeatNetColor.Surface, 22f, top + 49f, 250f, 14f);
+        }
+        listLoading = BeatNetLoading.Create(cards);
+        var details = ui.Rect(content, "Loading", 910f, 242f, 656f, 396f);
+        ui.Tint(details.gameObject.AddComponent<Image>(), BeatNetColor.Surface);
+        details.GetComponent<Image>().raycastTarget = false;
+        ui.Fill(details, "Title", BeatNetColor.Highlight, 0f, 8f, 510f, 48f);
+        ui.Fill(details, "Title", BeatNetColor.Highlight, 0f, 72f, 350f, 48f);
+        ui.Fill(details, "Artist", BeatNetColor.Card, 0f, 180f, 310f, 26f);
+        ui.Fill(details, "Mapper", BeatNetColor.Card, 0f, 312f, 230f, 26f);
+        ui.Fill(details, "Difficulty", BeatNetColor.Card, 320f, 312f, 240f, 26f);
+        ui.Fill(details, "Size", BeatNetColor.Card, 0f, 370f, 100f, 18f);
+        detailsLoading = BeatNetLoading.Create(details);
+        var size = ui.Rect(content, "Loading size", 910f, 646f, 300f, 30f);
+        ui.Fill(size, "Size", BeatNetColor.Card, 0f, 6f, 100f, 18f);
+        sizeLoading = BeatNetLoading.Create(size);
+        var supported = ui.Rect(content, "Loading difficulties", 910f, 554f, 656f, 90f);
+        for (var index = 0; index < 3; index++)
+        {
+            ui.Fill(supported, "Difficulty", BeatNetColor.Card, 0f, index * 28f + 4f, 140f, 22f);
+        }
+        supportedLoading = BeatNetLoading.Create(supported);
+    }
+
+    private void BuildDifficultyPopup()
+    {
+        var overlay = ui.Button(transform, "", 0f, 0f, 0f, 0f);
+        ((BeatNetControl)overlay).Sound = BeatNetSound.None;
+        ((BeatNetControl)overlay).HoverSound = BeatNetSound.None;
+        var overlayRect = (RectTransform)overlay.transform;
+        overlayRect.anchorMin = Vector2.zero;
+        overlayRect.anchorMax = Vector2.one;
+        overlayRect.pivot = new Vector2(0.5f, 0.5f);
+        overlayRect.offsetMin = overlayRect.offsetMax = Vector2.zero;
+        difficultyPopup = overlay.gameObject;
+        difficultyPopup.name = "Difficulties";
+        overlay.transition = Selectable.Transition.None;
+        ui.Tint((Image)overlay.targetGraphic, BeatNetColor.Backdrop);
+        overlay.onClick.AddListener(CloseDifficulties);
+        difficultyDialog = ui.Rect(overlay.transform, "Dialog", 490f, 280f, 660f, 380f);
+        difficultyDialog.pivot = new Vector2(0.5f, 0.5f);
+        difficultyDialog.anchorMin = difficultyDialog.anchorMax = new Vector2(0.5f, 0.5f);
+        difficultyDialog.anchoredPosition = Vector2.zero;
+        difficultyPerspective = new BeatNetPerspective(difficultyDialog.gameObject.AddComponent<CanvasMousePerspective>());
+        var dialogImage = difficultyDialog.gameObject.AddComponent<Image>();
+        ui.Tint(dialogImage, BeatNetColor.Background);
+        var dialogButton = difficultyDialog.gameObject.AddComponent<Button>();
+        dialogButton.targetGraphic = dialogImage;
+        dialogButton.transition = Selectable.Transition.None;
+        dialogButton.navigation = new Navigation { mode = Navigation.Mode.None };
+        ui.Fill(difficultyDialog, "Accent", BeatNetColor.Accent, 0f, 0f, 660f, 3f);
+        ui.Text(difficultyDialog, "Choose difficulty", 34f, 30f, 22f, 600f, 64f, BeatNetColor.Text, BeatNetFont.Heading);
+        difficultyList = ui.Rect(difficultyDialog, "Choices", 30f, 100f, 600f, 194f);
+        difficultyBack = ui.Button(difficultyDialog, "Back", 30f, 314f, 600f, 48f);
+        ((BeatNetControl)difficultyBack).Sound = BeatNetSound.None;
+        ((BeatNetControl)difficultyBack).HoverOnly = true;
+        difficultyBack.onClick.AddListener(CloseDifficulties);
+        difficultyMotion = BeatNetMotion.Create(difficultyPopup, difficultyDialog, new Vector2(120f, -120f));
+        difficultyPopup.SetActive(false);
+    }
+
+    private void OpenDifficulties()
+    {
+        if (!library || installing || pending != null)
+        {
+            return;
+        }
+        var choices = PlayableSongs().Select(item => item.BeatmapInfo.difficulty).Distinct().ToArray();
+        if (choices.Length == 0)
+        {
+            return;
+        }
+        BeatNetSounds.Play(BeatNetSound.Confirm);
+        foreach (var button in difficultyChoices)
+        {
+            button.gameObject.SetActive(false);
+        }
+        for (var index = 0; index < choices.Length; index++)
+        {
+            var value = choices[index];
+            Button button;
+            if (index < difficultyChoices.Count)
+            {
+                button = difficultyChoices[index];
+            }
+            else
+            {
+                button = ui.Button(difficultyList, "", 0f, index * 62f, 600f, 54f);
+                ((BeatNetControl)button).HoverOnly = true;
+                difficultyChoices.Add(button);
+            }
+            button.gameObject.SetActive(true);
+            var song = PlayableSongs().First(item => item.BeatmapInfo.difficulty == value);
+            button.GetComponentInChildren<TextMeshProUGUI>(true).text = song.Beatmap.metadata.GetDifficulty(value);
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() =>
+            {
+                playDifficulty = value;
+                HideDifficulties();
+                RefreshControls();
+            });
+            ui.Style(button);
+        }
+        var spacing = Mathf.Min(62f, 496f / choices.Length);
+        var height = choices.Length * spacing - 8f;
+        difficultyDialog.sizeDelta = new Vector2(660f, height + 186f);
+        difficultyList.sizeDelta = new Vector2(600f, height);
+        for (var index = 0; index < choices.Length; index++)
+        {
+            var rect = (RectTransform)difficultyChoices[index].transform;
+            rect.anchoredPosition = new Vector2(0f, -index * spacing);
+            rect.sizeDelta = new Vector2(600f, spacing - 8f);
+            var label = difficultyChoices[index].GetComponentInChildren<TextMeshProUGUI>(true);
+            label.rectTransform.sizeDelta = new Vector2(568f, spacing - 8f);
+            label.enableAutoSizing = true;
+            label.fontSizeMin = 12f;
+            label.fontSizeMax = 22f;
+        }
+        difficultyBack.GetComponent<RectTransform>().anchoredPosition = new Vector2(30f, -height - 120f);
+        difficultyPerspective.Set(3.4f);
+        difficultyMotion.Show();
+        Canvas.ForceUpdateCanvases();
+        var selectedChoice = difficultyChoices[Math.Max(0, Array.IndexOf(choices, playDifficulty))];
+        events.SetSelectedGameObject(controller ? selectedChoice.gameObject : null);
+    }
+
+    private void CloseDifficulties()
+    {
+        if (!difficultyPopup.activeSelf || difficultyMotion.IsHiding)
+        {
+            return;
+        }
+        BeatNetSounds.Play(BeatNetSound.Back);
+        HideDifficulties();
+    }
+
+    private void HideDifficulties()
+    {
+        difficultyMotion.Hide(finished: () =>
+        {
+            if (IsOpen && !closing && difficulty.gameObject.activeInHierarchy && difficulty.interactable)
+            {
+                events.SetSelectedGameObject(controller ? difficulty.gameObject : null);
+            }
+        });
+    }
+
+    internal System.Collections.IEnumerator Prepare(Func<bool> canOpen)
+    {
+        yield return ui.PrepareShaders();
+        if (this == null)
+        {
+            yield break;
+        }
+        WarmCatalog();
+        yield return BeatNetWarmup.Run(gameObject, fade, () =>
+        {
+            SetVisible(false);
+            prepared = true;
+            leftPrompt.gameObject.SetActive(controller);
+            rightPrompt.gameObject.SetActive(controller);
+            if (openRequested)
+            {
+                openRequested = false;
+                if (canOpen())
+                {
+                    Show();
+                }
+            }
+        }, keepActive: true);
+    }
+
+    private void WarmCatalog()
+    {
+        if (firstPage?.Status != TaskStatus.RanToCompletion)
+        {
+            return;
+        }
+        var result = firstPage.Result;
+        for (var index = 0; index < Math.Min(rows.Count, result.Items.Length); index++)
+        {
+            var entry = result.Items[index];
+            rowLabels[index].text = entry.Artist.Length == 0 ? entry.Title : $"{entry.Title} - {entry.Artist}";
+            rowDetails[index].text = entry.Creator;
+        }
+        if (result.Items.Length > 0)
+        {
+            title.text = result.Items[0].Title;
+            mapper.text = result.Items[0].Creator;
+            description.text = result.Items[0].Artist;
+        }
+    }
+
+    private void SetVisible(bool active)
+    {
+        visible = active;
+        canvas.enabled = active;
+        events.enabled = active;
+        pointerModule.enabled = active;
+        pointerInput.enabled = active;
+        enabled = active;
+        GetComponent<GraphicRaycaster>().enabled = active;
+        if (!active)
+        {
+            fade.alpha = 0f;
+            fade.interactable = false;
+            fade.blocksRaycasts = false;
+            closeFrame = Time.frameCount;
+        }
+    }
+
+    internal void SetController(bool active)
+    {
+        if (controller == active)
+        {
+            return;
+        }
+        controller = active;
+        ui.SetController(active);
+        if (prepared && !active && difficultyPopup.activeSelf)
+        {
+            events.SetSelectedGameObject(null);
+        }
+        leftPrompt.gameObject.SetActive(active);
+        rightPrompt.gameObject.SetActive(active);
+        if (IsOpen)
+        {
+            RefreshControls();
+        }
+    }
+
+    internal void Show()
+    {
+        if (!prepared)
+        {
+            openRequested = true;
+            return;
+        }
+        if (IsOpen || inputOwner != null || JeffBezosController.instance == null || !JeffBezosController.instance.UIInputEnabled)
+        {
+            return;
+        }
+        var watch = timedOpen ? null : System.Diagnostics.Stopwatch.StartNew();
+        previousEvents = EventSystem.current;
+        previousSelection = previousEvents?.currentSelectedGameObject;
+        cursorVisible = Cursor.visible;
+        cursorLock = Cursor.lockState;
+        mousePosition = pointerInput.mousePosition;
+        shownFrame = Time.frameCount;
+        lastDirection = 0;
+        closing = false;
+        tabs.Reset();
+        KeepCursor = false;
+        backgroundPerspective?.Set(0.25f, 3f);
+        windowPerspective.Set(1.4f);
+        window.localRotation = Quaternion.identity;
+        foreach (var system in FindObjectsByType<EventSystem>(FindObjectsSortMode.None))
+        {
+            if (system != events && system.enabled)
+            {
+                eventSystems.Add(system);
+            }
+        }
+        inputOwner = JeffBezosController.instance;
+        BlocksGameInput = true;
+        inputOwner.DisableUIInputs();
+        foreach (var system in eventSystems)
+        {
+            system.enabled = false;
+        }
+        var inputTime = watch?.ElapsedMilliseconds ?? 0L;
+        motion.Show();
+        var visibilityTime = watch?.ElapsedMilliseconds ?? 0L;
+        BeatNetSounds.Play(BeatNetSound.Confirm);
+        var soundTime = watch?.ElapsedMilliseconds ?? 0L;
+        ui.RefreshTheme();
+        EventSystem.current = events;
+        events.SetSelectedGameObject(controller ? controls[1].gameObject : null);
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+        try
+        {
+            latest.Clear();
+            LoadPage(0);
+        }
+        catch (Exception error)
+        {
+            ShowError(error);
+        }
+        if (watch != null)
+        {
+            timedOpen = true;
+            openingUntil = Time.unscaledTime + 1f;
+            CustomSongLoader.Logger?.LogInfo($"beatnet opening input {inputTime} ms visibility {visibilityTime - inputTime} ms sound {soundTime - visibilityTime} ms page {watch.ElapsedMilliseconds - soundTime} ms");
+        }
+    }
+
+    internal void Close(bool immediate = false, Action? finished = null)
+    {
+        openRequested = false;
+        if (!IsOpen || closing && !immediate)
+        {
+            return;
+        }
+        if (!immediate && finished == null)
+        {
+            BeatNetSounds.Play(BeatNetSound.Back);
+        }
+        closing = true;
+        pageFrames.Clear();
+        detailFrames.Clear();
+        drawingPage = drawingDetails = false;
+        audioPreview.Stop();
+        tabs.Reset();
+        KeepCursor = !controller;
+        keyboard.Hide();
+        difficultyPopup.SetActive(false);
+        cancellation?.Cancel();
+        updateCancellation?.Cancel();
+        search.DeactivateInputField();
+        events.SetSelectedGameObject(null);
+        motion.Hide(immediate, finished);
+    }
+
+    internal bool RestoreInput(bool immediate = false)
+    {
+        if (inputOwner == null || (!immediate && (IsOpen || Time.frameCount <= closeFrame)))
+        {
+            return false;
+        }
+        PollWork();
+        if (!immediate && pending != null)
+        {
+            return false;
+        }
+        if (reloadNeeded)
+        {
+            reloadNeeded = false;
+            CustomSongLoader.Reload();
+        }
+        inputOwner.EnableUIInputs();
+        inputOwner = null;
+        BlocksGameInput = false;
+        foreach (var system in eventSystems)
+        {
+            if (system != null)
+            {
+                system.enabled = true;
+            }
+        }
+        eventSystems.Clear();
+        if (previousEvents != null)
+        {
+            EventSystem.current = previousEvents;
+        }
+        if (previousSelection != null && previousSelection.activeInHierarchy && previousEvents != null)
+        {
+            previousEvents.SetSelectedGameObject(previousSelection);
+        }
+        previousSelection = null;
+        previousEvents = null;
+        RestorePerspective();
+        RestoreCursor();
+        return true;
+    }
+
+    private void RestorePerspective()
+    {
+        backgroundPerspective?.Restore();
+    }
+
+    internal void RestoreCursor()
+    {
+        Cursor.visible = !controller || cursorVisible;
+        Cursor.lockState = controller ? cursorLock : CursorLockMode.None;
+        if (!controller)
+        {
+            foreach (var raycaster in FindObjectsByType<GraphicRaycaster>(FindObjectsSortMode.None))
+            {
+                raycaster.enabled = true;
+            }
+        }
+    }
+
+    internal void Back()
+    {
+        if (keyboard.IsOpen)
+        {
+            keyboard.Close();
+            return;
+        }
+        if (difficultyPopup.activeSelf)
+        {
+            CloseDifficulties();
+            return;
+        }
+        if (IsTyping)
+        {
+            BeatNetSounds.Play(BeatNetSound.Back);
+            search.DeactivateInputField();
+            events.SetSelectedGameObject(controls[1].gameObject);
+            return;
+        }
+        Close();
+    }
+
+    private void SetLibrary(bool value)
+    {
+        if (installing || tabs.IsMoving || library == value)
+        {
+            return;
+        }
+        BeatNetSounds.Play(BeatNetSound.Confirm);
+        search.DeactivateInputField();
+        events.SetSelectedGameObject(null);
+        CancelWork();
+        audioPreview.Stop();
+        tabs.Switch(value, () =>
+        {
+            library = value;
+            query = search.text.Trim();
+            LoadPage(0);
+        });
+    }
+
+    private void Search()
+    {
+        if (installing)
+        {
+            return;
+        }
+        BeatNetSounds.Play(BeatNetSound.Confirm);
+        query = search.text.Trim();
+        LoadPage(0);
+    }
+
+    private void ChangePage(int direction)
+    {
+        if (drawingPage || pending != null || (direction < 0 && !previous.interactable) || (direction > 0 && !next.interactable))
+        {
+            return;
+        }
+        BeatNetSounds.Play(direction > 0 ? BeatNetSound.Up : BeatNetSound.Down);
+        LoadPage(Math.Max(0, page.Offset + direction * PageSize));
+    }
+
+    private void LoadPage(int offset)
+    {
+        pageFrames.Clear();
+        detailFrames.Clear();
+        drawingPage = drawingDetails = false;
+        difficultyPopup.SetActive(false);
+        audioPreview.Stop();
+        CancelWork();
+        loadingPage = true;
+        listLoading.Show();
+        detailsLoading.Show();
+        foreach (var item in textFades.Values)
+        {
+            item.Clear();
+        }
+        selected = null;
+        selectedIndex = -1;
+        playDifficulty = string.Empty;
+        foreach (var row in rows)
+        {
+            row.gameObject.SetActive(false);
+        }
+        empty.gameObject.SetActive(false);
+        pageLabel.text = string.Empty;
+        countLabel.text = string.Empty;
+        title.text = string.Empty;
+        mapper.text = sizeLabel.text = description.text = updateLabel.text = string.Empty;
+        supported.text = supportedRight.text = string.Empty;
+        foreach (var text in difficultyNames.Concat(difficultyLevels).Concat(levelLabels))
+        {
+            text.text = string.Empty;
+        }
+        list.StopMovement();
+        list.content.anchoredPosition = Vector2.zero;
+        status.text = string.Empty;
+        RefreshControls();
+        var local = library;
+        var filter = query;
+        var source = client;
+        var cachedPage = !local && filter.Length == 0 && offset == 0 ? firstPage : null;
+        if (cachedPage != null)
+        {
+            firstPage = null;
+            if (cachedPage.IsFaulted || cachedPage.IsCanceled)
+            {
+                cachedPage = null;
+            }
+        }
+        Run(async token =>
+        {
+            var scan = Task.Run(() => installer.Library(), token);
+            if (!local)
+            {
+                source = await clientReady.ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+            }
+            var remote = local ? null : cachedPage ?? source!.List(filter, offset, PageSize, token);
+            if (remote != null)
+            {
+                await Task.WhenAll(scan, remote).ConfigureAwait(false);
+            }
+            var entries = await scan.ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            CatalogPage result;
+            if (local)
+            {
+                var matches = entries.Where(item => filter.Length == 0
+                    || item.Title.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0
+                    || item.Artist.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0
+                    || item.Creator.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
+                var start = matches.Length == 0 ? 0 : Math.Min(offset, (matches.Length - 1) / PageSize * PageSize);
+                result = new CatalogPage { Items = matches.Skip(start).Take(PageSize).ToArray(), Total = matches.Length, Offset = start, Limit = PageSize };
+            }
+            else
+            {
+                result = await remote!.ConfigureAwait(false);
+            }
+            return (Page: result, Entries: entries);
+        }, loaded =>
+        {
+            if (!IsOpen)
+            {
+                return;
+            }
+            client = source;
+            libraryEntries = loaded.Entries;
+            CheckUpdates();
+            var result = loaded.Page;
+            if (result.Items.Length == 0 && result.Total > 0 && offset > 0)
+            {
+                LoadPage(Math.Max(0, (result.Total - 1) / PageSize * PageSize));
+                return;
+            }
+            foreach (var entry in result.Items)
+            {
+                if (latest.TryGetValue(entry.Id, out var cached) && cached.Revision.Id != entry.Revision.Id)
+                {
+                    latest.Remove(entry.Id);
+                }
+            }
+            ApplyPage(result);
+        });
+    }
+
+    private void ApplyPage(CatalogPage result)
+    {
+        pageFrames.Clear();
+        drawingPage = true;
+        page = result;
+        empty.gameObject.SetActive(page.Items.Length == 0);
+        empty.text = query.Length > 0 ? "No matching songs" : library ? "Your library is empty" : "No beatmaps available";
+        list.content.sizeDelta = new Vector2(ListWidth, Math.Max(488f, page.Items.Length * 86f - 8f));
+        for (var index = 0; index < page.Items.Length; index++)
+        {
+            var row = index;
+            pageFrames.Add(() =>
+            {
+                SetRowLabel(row);
+                rows[row].gameObject.SetActive(true);
+                rows[row].interactable = false;
+                rowFades[row].Show();
+            });
+        }
+        pageFrames.Add(() =>
+        {
+            FadeText(pageLabel, page.Total == 0 ? "0 songs" : $"{page.Offset + 1}-{page.Offset + page.Items.Length} of {page.Total}");
+            FadeText(countLabel, $"{page.Total} SONG{(page.Total == 1 ? "" : "S")}");
+            textFades[empty].Show();
+            list.content.anchoredPosition = Vector2.zero;
+        });
+        pageFrames.Add(() =>
+        {
+            drawingPage = false;
+            HideLoading();
+            if (page.Items.Length > 0)
+            {
+                if (controller && !IsTyping && !tabs.IsMoving)
+                {
+                    events.SetSelectedGameObject(rows[0].gameObject);
+                }
+                SelectRow(0);
+            }
+            RefreshControls();
+        });
+        RefreshControls();
+    }
+
+    private void HideLoading()
+    {
+        loadingPage = false;
+        listLoading.Hide();
+        detailsLoading.Hide();
+        sizeLoading.Hide();
+        supportedLoading.Hide();
+    }
+
+    private bool IsInstalled(BeatmapEntry beatmap) => libraryEntries.Any(item => item.Id == beatmap.Id);
+
+    private bool HasUpdate(BeatmapEntry beatmap)
+    {
+        if (!BeatNetClient.IsId(beatmap.Id))
+        {
+            return false;
+        }
+        var revision = libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.Revision.Id;
+        var remote = latest.TryGetValue(beatmap.Id, out var entry) ? entry : library ? null : beatmap;
+        return revision != null && remote != null && revision != remote.Revision.Id;
+    }
+
+    private void SetRowLabel(int index)
+    {
+        var beatmap = page.Items[index];
+        rowLabels[index].text = beatmap.Artist.Length == 0 ? beatmap.Title : $"{beatmap.Title} - {beatmap.Artist}";
+        rowDetails[index].text = beatmap.Creator;
+        rowStates[index].text = RowState(beatmap);
+        ui.Style(rows[index], selected: index == selectedIndex);
+        rowMarkers[index].gameObject.SetActive(index == selectedIndex);
+    }
+
+    private string RowState(BeatmapEntry beatmap) => HasUpdate(beatmap) ? "UPDATE AVAILABLE" : IsInstalled(beatmap) ? "INSTALLED" : string.Empty;
+
+    private void SelectRow(int index, bool sound = false)
+    {
+        if (drawingPage || installing || index < 0 || index >= page.Items.Length || (index == selectedIndex && (pending != null || selected != null)))
+        {
+            return;
+        }
+        if (sound)
+        {
+            BeatNetSounds.Play(BeatNetSound.Confirm);
+        }
+        var beatmap = page.Items[index];
+        audioPreview.Stop();
+        difficultyPopup.SetActive(false);
+        var previousIndex = selectedIndex;
+        selectedIndex = index;
+        playDifficulty = string.Empty;
+        if (previousIndex >= 0 && previousIndex != index)
+        {
+            ui.Style(rows[previousIndex]);
+            rowMarkers[previousIndex].gameObject.SetActive(false);
+        }
+        ui.Style(rows[index], selected: true);
+        rowMarkers[index].gameObject.SetActive(true);
+        selected = null;
+        CancelWork();
+        sizeLoading.Hide();
+        supportedLoading.Hide();
+        ShowDetails(beatmap);
+        status.text = string.Empty;
+        if (library || latest.ContainsKey(beatmap.Id))
+        {
+            selected = latest.TryGetValue(beatmap.Id, out var cached) ? cached : beatmap;
+            ShowDetails(selected);
+            RefreshControls();
+            return;
+        }
+        if (beatmap.Files.Length == 0)
+        {
+            sizeLoading.Show();
+        }
+        if (beatmap.Difficulties.Length == 0)
+        {
+            supportedLoading.Show();
+        }
+        Run(token => client!.Get(beatmap.Id, token), result =>
+        {
+            if (!IsOpen)
+            {
+                return;
+            }
+            latest[result.Id] = result;
+            selected = result;
+            sizeLoading.Hide();
+            supportedLoading.Hide();
+            page.Items[index] = result;
+            SetRowLabel(index);
+            ShowDetails(result);
+            status.text = string.Empty;
+        });
+    }
+
+    private void ShowDetails(BeatmapEntry beatmap)
+    {
+        detailFrames.Clear();
+        drawingDetails = true;
+        QueueText(title, beatmap.Title);
+        QueueText(mapper, beatmap.Creator);
+        QueueText(description, beatmap.Artist);
+        var installedSize = libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.InstalledSize ?? beatmap.InstalledSize;
+        var size = library && installedSize > 0 ? installedSize : beatmap.Files.Sum(file => file.Size);
+        QueueText(sizeLabel, size > 0 ? (size / 1048576f).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " MB" : string.Empty);
+        var difficulties = library
+            ? libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.Difficulties ?? beatmap.Difficulties
+            : beatmap.Difficulties;
+        var choices = library ? PlayableSongs() : Array.Empty<ArcadeSongDatabase.BeatmapItem>();
+        for (var index = 0; index < difficultyNames.Count; index++)
+        {
+            var slot = index < difficulties.Length ? difficulties[index] : string.Empty;
+            var song = choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == slot);
+            var level = song?.Beatmap.metadata.tagData.Level ?? (beatmap.Levels.TryGetValue(slot, out var number) ? number : 0);
+            var name = song?.Beatmap.metadata.GetDifficulty(slot) ?? (beatmap.DifficultyLabels.TryGetValue(slot, out var label) ? label : slot);
+            var row = index;
+            detailFrames.Add(() =>
+            {
+                FadeText(difficultyNames[row], name);
+                FadeText(difficultyLevels[row], slot.Length == 0 ? string.Empty : "<mspace=0.82em>" + level.ToString("00"));
+                levelLabels[row].text = slot.Length == 0 ? string.Empty : "<mspace=0.80em>LV";
+            });
+        }
+        detailFrames.Add(() =>
+        {
+            drawingDetails = false;
+            RefreshControls();
+        });
+    }
+
+    private void QueueText(TextMeshProUGUI text, string value) => detailFrames.Add(() => FadeText(text, value));
+
+    private void FadeText(TextMeshProUGUI text, string value)
+    {
+        if (text.text != value || !textFades[text].IsVisible)
+        {
+            text.text = value;
+            textFades[text].Show();
+        }
+    }
+
+    private void LayoutDetails()
+    {
+        if (!IsOpen || title.text.Length == 0 || title.havePropertiesChanged)
+        {
+            return;
+        }
+        var height = Mathf.Clamp(title.GetRenderedValues(false).y, title.fontSize, 108f);
+        if (laidOutTitle == title.text && Mathf.Approximately(laidOutHeight, height))
+        {
+            return;
+        }
+        laidOutTitle = title.text;
+        laidOutHeight = height;
+        var top = 242f + height + 6f;
+        mapper.rectTransform.anchoredPosition = new Vector2(910f, -top);
+        description.rectTransform.anchoredPosition = new Vector2(910f, -top - 42f);
+    }
+
+    private void CheckUpdates()
+    {
+        if (client == null || updateCheck != null && !updateCheck.IsCompleted && updateCancellation?.IsCancellationRequested != true)
+        {
+            return;
+        }
+        if (updateCheck != null)
+        {
+            _ = updateCheck.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+        updateCancellation?.Dispose();
+        updateCancellation = new CancellationTokenSource();
+        updateFailed = false;
+        var entries = libraryEntries.Where(item => BeatNetClient.IsId(item.Id)).ToArray();
+        var token = updateCancellation.Token;
+        var source = client;
+        updateCheck = Task.Run(async () =>
+        {
+            var results = new Dictionary<string, BeatmapEntry>();
+            var failed = false;
+            using var slots = new SemaphoreSlim(4);
+            var requests = entries.Select(async local =>
+            {
+                await slots.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    var remote = await source.Get(local.Id, token).ConfigureAwait(false);
+                    remote.LocalPath = local.LocalPath;
+                    remote.InstalledSize = local.InstalledSize;
+                    lock (results)
+                    {
+                        results[remote.Id] = remote;
+                    }
+                }
+                catch (Exception error) when (error is HttpRequestException || error is InvalidDataException || error is OperationCanceledException)
+                {
+                    token.ThrowIfCancellationRequested();
+                    lock (results)
+                    {
+                        failed = true;
+                    }
+                }
+                finally
+                {
+                    slots.Release();
+                }
+            });
+            await Task.WhenAll(requests).ConfigureAwait(false);
+            return (results, failed);
+        }, token);
+    }
+
+    private void PollUpdates()
+    {
+        if (updateCheck == null || !updateCheck.IsCompleted)
+        {
+            return;
+        }
+        var task = updateCheck;
+        updateCheck = null;
+        try
+        {
+            var result = task.GetAwaiter().GetResult();
+            updateFailed = result.Failed;
+            foreach (var entry in result.Entries)
+            {
+                if (!latest.TryGetValue(entry.Key, out var cached) || cached.Revision.Number <= entry.Value.Revision.Number)
+                {
+                    latest[entry.Key] = entry.Value;
+                }
+            }
+            if (IsOpen)
+            {
+                for (var index = 0; index < page.Items.Length; index++)
+                {
+                    var state = RowState(page.Items[index]);
+                    if (rowStates[index].text != state)
+                    {
+                        var row = index;
+                        pageFrames.Add(() => rowStates[row].text = state);
+                    }
+                }
+                if (library && selected != null && latest.TryGetValue(selected.Id, out var remote))
+                {
+                    selected = remote;
+                    ShowDetails(selected);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            sizeLoading.Hide();
+            supportedLoading.Hide();
+        }
+        catch (Exception)
+        {
+            updateFailed = true;
+        }
+        RefreshControls();
+    }
+
+    private void TogglePreview()
+    {
+        if (audioPreview.IsActive)
+        {
+            audioPreview.Stop();
+            return;
+        }
+        if (library || installing || pending != null || selected?.Preview == null || client == null)
+        {
+            return;
+        }
+        try
+        {
+            status.text = string.Empty;
+            audioPreview.Play(client.PreviewUrl(selected));
+        }
+        catch (Exception error)
+        {
+            ShowError(error);
+        }
+    }
+
+    private void Install()
+    {
+        if (selected == null || pending != null || client == null)
+        {
+            return;
+        }
+        audioPreview.Stop();
+        var beatmap = selected;
+        if (latest.TryGetValue(beatmap.Id, out var remote))
+        {
+            beatmap = remote;
+        }
+        installing = true;
+        downloadProgress = 0f;
+        progress = "Starting download";
+        Run(async token =>
+        {
+            await installer.Install(client, beatmap, message => progress = message, token,
+                value => downloadProgress = value).ConfigureAwait(false);
+            return installer.Library();
+        }, entries =>
+        {
+            reloadNeeded = true;
+            if (IsOpen)
+            {
+                CustomSongLoader.Reload();
+                reloadNeeded = false;
+            }
+            libraryEntries = entries;
+            latest[beatmap.Id] = beatmap;
+            status.text = string.Empty;
+            if (IsOpen && library)
+            {
+                LoadPage(page.Offset);
+            }
+            else if (IsOpen)
+            {
+                for (var index = 0; index < page.Items.Length; index++)
+                {
+                    SetRowLabel(index);
+                }
+            }
+        });
+    }
+
+    private void Uninstall()
+    {
+        if (!library || selected == null || installing || pending != null)
+        {
+            return;
+        }
+        var beatmap = selected;
+        installing = removing = true;
+        CustomSongLoader.SelectAfterRemoval(libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.LocalPath ?? beatmap.LocalPath);
+        progress = "Uninstalling";
+        Run(token => Task.Run(() =>
+        {
+            installer.Uninstall(beatmap, token);
+            return installer.Library();
+        }, token), entries =>
+        {
+            reloadNeeded = true;
+            if (IsOpen)
+            {
+                CustomSongLoader.Reload();
+                reloadNeeded = false;
+            }
+            libraryEntries = entries;
+            if (IsOpen)
+            {
+                LoadPage(page.Offset);
+                status.text = "Uninstalled";
+            }
+        });
+    }
+
+    private ArcadeSongDatabase.BeatmapItem[] PlayableSongs()
+    {
+        if (selected == null || ArcadeSongDatabase.Instance == null)
+        {
+            return Array.Empty<ArcadeSongDatabase.BeatmapItem>();
+        }
+        var folder = libraryEntries.FirstOrDefault(item => item.Id == selected.Id)?.LocalPath;
+        if (folder == null)
+        {
+            return Array.Empty<ArcadeSongDatabase.BeatmapItem>();
+        }
+        var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar);
+        var prefix = root + Path.DirectorySeparatorChar;
+        return ArcadeSongDatabase.Instance.SongDatabase.Values.Where(item => item.CustomSong
+            && (Path.GetFullPath(item.Song.CustomPath).Equals(root, StringComparison.OrdinalIgnoreCase)
+                || Path.GetFullPath(item.Song.CustomPath).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(item => Array.IndexOf(ArcadeSongDatabase.Instance.BeatmapIndex.Difficulties, item.BeatmapInfo.difficulty)).ToArray();
+    }
+
+    private void Play()
+    {
+        if (!library || selected == null || installing || pending != null)
+        {
+            return;
+        }
+        if (HasUpdate(selected))
+        {
+            BeatNetSounds.Play(BeatNetSound.Confirm);
+            Install();
+            return;
+        }
+        try
+        {
+            if (reloadNeeded)
+            {
+                reloadNeeded = false;
+                CustomSongLoader.Reload();
+            }
+            var choices = PlayableSongs();
+            var song = choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == playDifficulty) ?? choices.FirstOrDefault();
+            if (song == null)
+            {
+                status.text = "Cannot play this beatmap";
+                return;
+            }
+            Close(finished: () => StartSong(song));
+        }
+        catch (Exception error)
+        {
+            CustomSongLoader.Logger?.LogWarning($"cannot play beatmap: {error.Message}");
+            if (IsOpen)
+            {
+                status.text = "Cannot play this beatmap";
+            }
+        }
+    }
+
+    private void StartSong(ArcadeSongDatabase.BeatmapItem song)
+    {
+        try
+        {
+            RestoreInput(true);
+            var database = ArcadeSongDatabase.Instance;
+            database.SetCategory(database.SelectableCategories.FirstOrDefault(item => item.Name == "custom"));
+            database.SetDifficulty(song.BeatmapInfo.difficulty);
+            var index = database.IndexOfSong(song.Song);
+            if (index >= 0)
+            {
+                ArcadeSongList.Instance.SetSelectedSongIndex(index);
+            }
+            database.PlaySong(song);
+        }
+        catch (Exception error)
+        {
+            CustomSongLoader.Logger?.LogWarning($"cannot play beatmap: {error.Message}");
+        }
+    }
+
+    private void Run<T>(Func<CancellationToken, Task<T>> operation, Action<T> apply)
+    {
+        CancelWork();
+        cancellation = new CancellationTokenSource();
+        var token = cancellation.Token;
+        var task = Task.Run(() => operation(token), token);
+        pending = task;
+        finish = () => apply(task.GetAwaiter().GetResult());
+        RefreshControls();
+    }
+
+    private void PollWork()
+    {
+        if (pending == null || !pending.IsCompleted)
+        {
+            return;
+        }
+        var done = finish;
+        pending = null;
+        finish = null;
+        cancellation?.Dispose();
+        cancellation = null;
+        installing = false;
+        removing = false;
+        try
+        {
+            done?.Invoke();
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsOpen && !closing)
+            {
+                status.text = "Request timed out / try again";
+                if (loadingPage)
+                {
+                    empty.gameObject.SetActive(true);
+                    FadeText(empty, "The collection could not load\nUse Search to try again");
+                    HideLoading();
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            ShowError(error);
+        }
+        RefreshControls();
+    }
+
+    private void RefreshControls()
+    {
+        foreach (var control in controls)
+        {
+            control.interactable = !installing;
+        }
+        controls[controls.Count - 1].interactable = true;
+        foreach (var row in rows)
+        {
+            row.interactable = !installing && !drawingPage;
+        }
+        previous.interactable = !drawingPage && pending == null && page.Offset > 0;
+        next.interactable = !drawingPage && pending == null && page.Offset + page.Items.Length < page.Total;
+        ((BeatNetControl)previous).Refresh();
+        ((BeatNetControl)next).Refresh();
+        var installed = selected != null && IsInstalled(selected);
+        LayoutDetails();
+        var update = selected != null && HasUpdate(selected);
+        ui.Style(exploreTab, !library);
+        ui.Style(libraryTab, library);
+        var installRect = (RectTransform)install.transform;
+        installRect.anchoredPosition = new Vector2(910f, library ? -746f : -788f);
+        installRect.sizeDelta = new Vector2(656f, 60f);
+        var installLabel = install.GetComponentInChildren<TextMeshProUGUI>(true);
+        installLabel.rectTransform.sizeDelta = new Vector2(installRect.sizeDelta.x - 32f, installRect.sizeDelta.y);
+        installLabel.fontSize = 24f;
+        installLabel.text = installing && !removing ? progress : update ? "Update" : installed ? "Installed" : selected == null ? "Choose a beatmap" : "Download";
+        install.gameObject.SetActive(!library || update);
+        install.interactable = selected != null && pending == null && !drawingDetails && !installing && (!installed || update);
+        downloadFill.gameObject.SetActive(installing && !removing);
+        play.gameObject.SetActive(library && !update);
+        uninstall.gameObject.SetActive(library && installed);
+        difficulty.gameObject.SetActive(library && installed);
+        uninstall.interactable = installed && !drawingDetails && !installing && pending == null;
+        var choices = library && installed ? PlayableSongs() : Array.Empty<ArcadeSongDatabase.BeatmapItem>();
+        if (playDifficulty.Length == 0 && choices.Length > 0)
+        {
+            playDifficulty = choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == ArcadeSongDatabase.SelectedDifficulty)?.BeatmapInfo.difficulty
+                ?? choices[0].BeatmapInfo.difficulty;
+        }
+        difficulty.interactable = choices.Length > 0 && !drawingDetails && !installing && pending == null;
+        var currentSong = choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == playDifficulty);
+        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).text = currentSong == null ? "No playable difficulty" : currentSong.Beatmap.metadata.GetDifficulty(playDifficulty);
+        highscore.gameObject.SetActive(currentSong != null);
+        rank.gameObject.SetActive(currentSong != null);
+        cleared.gameObject.SetActive(currentSong != null);
+        if (currentSong != null)
+        {
+            var scores = FileStorage.highscores?.GetAllScores(currentSong.Path) ?? currentSong.Highscore;
+            scores.TryGetValue(HighScoreList.GetModifiersLeaderboard(StorableBeatmapOptions.GetModifierMask()), out var record);
+            FadeText(highscore, "<mspace=0.8em>" + (record?.score ?? 0).ToString("0000000"));
+            FadeText(rank, record == null || record.score == 0 ? string.Empty
+                : HighScoreScreen.GetLetterGradeArcade(record.accuracy, record.IsNoMiss(), record.cleared)
+                    .Replace("++", "<voffset=0.30em>+<voffset=-0.30em><space=-0.85em>+"));
+            FadeText(cleared, record?.cleared == true ? "<cspace=0.11em>cleared." : string.Empty);
+            LayoutScore();
+        }
+        preview.gameObject.SetActive(!library);
+        preview.interactable = !library && selected?.Preview != null && !drawingDetails && !installing && pending == null && client != null;
+        play.interactable = installed && !update && !drawingDetails && !installing && pending == null && choices.Length > 0
+            && (!BeatNetClient.IsId(selected?.Id) || updateCheck == null);
+        supported.gameObject.SetActive(true);
+        supportedHeading.gameObject.SetActive(true);
+        difficulty.GetComponent<RectTransform>().anchoredPosition = new Vector2(910f, -676f);
+        difficulty.GetComponent<RectTransform>().sizeDelta = new Vector2(656f, 48f);
+        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).rectTransform.sizeDelta = new Vector2(624f, 48f);
+        updateLabel.text = update ? "Update available" : library && updateCheck != null ? "Checking updates"
+            : library && updateFailed ? "Update check unavailable" : string.Empty;
+        updateLabel.rectTransform.anchoredPosition = new Vector2(1214f, -646f);
+        updateLabel.rectTransform.sizeDelta = new Vector2(352f, 30f);
+        updateLabel.alignment = TextAlignmentOptions.Right;
+        var focused = events.currentSelectedGameObject?.GetComponent<Selectable>();
+        if (controller && !closing && !tabs.IsMoving && !difficultyPopup.activeSelf && !keyboard.IsOpen
+            && (focused == null || !focused.gameObject.activeInHierarchy || !focused.interactable || focused == exploreTab || focused == libraryTab))
+        {
+            var target = update && install.interactable ? install : play.gameObject.activeInHierarchy && play.interactable ? play
+                : selectedIndex >= 0 && rows[selectedIndex].interactable ? rows[selectedIndex] : close;
+            events.SetSelectedGameObject(target.gameObject);
+        }
+    }
+
+    private void LayoutScore()
+    {
+        if (laidOutScore == highscore.text && laidOutRank == rank.text && laidOutClear == cleared.text)
+        {
+            return;
+        }
+        highscore.ForceMeshUpdate();
+        rank.ForceMeshUpdate();
+        var size = highscore.textInfo.characterCount > 0 ? highscore.textInfo.characterInfo[0].pointSize : highscore.fontSize;
+        cleared.fontSize = size * 13.64f / 48.1f;
+        cleared.ForceMeshUpdate();
+        GlyphBounds(highscore, out var scoreRight, out var scoreTop, out _);
+        GlyphBounds(cleared, out var clearRight, out _, out var clearBottom);
+        var scoreRect = highscore.rectTransform;
+        var rankRect = rank.rectTransform;
+        var clearRect = cleared.rectTransform;
+        var scoreBaseline = highscore.textInfo.characterCount > 0 ? highscore.textInfo.characterInfo[0].baseLine : 0f;
+        var rankBaseline = rank.textInfo.characterCount > 0 ? rank.textInfo.characterInfo[0].baseLine : 0f;
+        rankRect.anchoredPosition = new Vector2(scoreRect.anchoredPosition.x + scoreRight * scoreRect.localScale.x + 12f,
+            scoreRect.anchoredPosition.y + scoreBaseline * scoreRect.localScale.y - rankBaseline * rankRect.localScale.y);
+        clearRect.anchoredPosition = new Vector2(scoreRect.anchoredPosition.x + scoreRight * scoreRect.localScale.x - clearRight * clearRect.localScale.x,
+            scoreRect.anchoredPosition.y + scoreTop * scoreRect.localScale.y + size * 0.035f - clearBottom * clearRect.localScale.y);
+        laidOutScore = highscore.text;
+        laidOutRank = rank.text;
+        laidOutClear = cleared.text;
+    }
+
+    private static void GlyphBounds(TextMeshProUGUI text, out float right, out float top, out float bottom)
+    {
+        right = top = bottom = 0f;
+        var found = false;
+        for (var index = 0; index < text.textInfo.characterCount; index++)
+        {
+            var character = text.textInfo.characterInfo[index];
+            if (!character.isVisible || character.textElement == null)
+            {
+                continue;
+            }
+            var metrics = character.textElement.glyph.metrics;
+            var glyphRight = character.origin + (metrics.horizontalBearingX + metrics.width) * character.scale;
+            var glyphTop = character.baseLine + metrics.horizontalBearingY * character.scale;
+            var glyphBottom = character.baseLine + (metrics.horizontalBearingY - metrics.height) * character.scale;
+            right = found ? Mathf.Max(right, glyphRight) : glyphRight;
+            top = found ? Mathf.Max(top, glyphTop) : glyphTop;
+            bottom = found ? Mathf.Min(bottom, glyphBottom) : glyphBottom;
+            found = true;
+        }
+    }
+
+    private void ShowError(Exception error)
+    {
+        sizeLoading.Hide();
+        supportedLoading.Hide();
+        if (loadingPage)
+        {
+            HideLoading();
+            empty.gameObject.SetActive(true);
+        }
+        status.text = error is InvalidDataException ? error.Message
+            : error is HttpRequestException ? "Cannot reach BEATNET / check your connection or try again"
+            : error is IOException || error is UnauthorizedAccessException ? "Cannot save the beatmap / check disk space and folder permissions"
+            : "Cannot load this beatmap / try again";
+        CustomSongLoader.Logger?.LogWarning("beatnet request failed");
+        if (selectedIndex < 0)
+        {
+            FadeText(empty, "The collection could not load\nUse Search to try again");
+        }
+    }
+
+    private void Update()
+    {
+        if (openingUntil > 0f && Time.frameCount > shownFrame)
+        {
+            longestOpeningFrame = Mathf.Max(longestOpeningFrame, Time.unscaledDeltaTime * 1000f);
+            if (Time.unscaledTime >= openingUntil)
+            {
+                openingUntil = 0f;
+                CustomSongLoader.Logger?.LogInfo($"beatnet longest opening frame {Mathf.RoundToInt(longestOpeningFrame)} ms");
+            }
+        }
+        backgroundPerspective?.Tick();
+        windowPerspective.Set(difficultyPopup.activeSelf ? 0.8f : 1.4f);
+        windowPerspective.Tick();
+        difficultyPerspective.Tick();
+        ui.RefreshTheme();
+        PollWork();
+        PollUpdates();
+        try
+        {
+            if (pageFrames.IsPending)
+            {
+                pageFrames.Tick();
+                if (!pageFrames.IsPending && !timedPage)
+                {
+                    timedPage = true;
+                    CustomSongLoader.Logger?.LogInfo($"beatnet page step max {Math.Round(pageFrames.LongestMilliseconds)} ms");
+                }
+            }
+            else if (detailFrames.IsPending)
+            {
+                detailFrames.Tick();
+                if (!detailFrames.IsPending && !timedDetails)
+                {
+                    timedDetails = true;
+                    CustomSongLoader.Logger?.LogInfo($"beatnet detail step max {Math.Round(detailFrames.LongestMilliseconds)} ms");
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            pageFrames.Clear();
+            detailFrames.Clear();
+            drawingPage = drawingDetails = false;
+            ShowError(error);
+            RefreshControls();
+        }
+        audioPreview.Tick();
+        preview.GetComponentInChildren<TextMeshProUGUI>(true).text = audioPreview.IsLoading ? "Cancel preview" : audioPreview.IsActive ? "Stop preview" : "Preview";
+        if (audioPreview.Error.Length > 0)
+        {
+            status.text = audioPreview.Error;
+        }
+        if (screenWidth != Screen.width || screenHeight != Screen.height)
+        {
+            screenWidth = Screen.width;
+            screenHeight = Screen.height;
+            scaler.matchWidthOrHeight = Screen.width / (float)Math.Max(1, Screen.height) < 1640f / 940f ? 0f : 1f;
+        }
+        if (installing)
+        {
+            status.text = removing ? progress : string.Empty;
+            if (!removing)
+            {
+                install.GetComponentInChildren<TextMeshProUGUI>(true).text = progress;
+                downloadText.text = progress;
+                downloadFill.rectTransform.sizeDelta = new Vector2(656f * Mathf.Clamp01(downloadProgress), 60f);
+            }
+        }
+    }
+
+    private void LateUpdate()
+    {
+        if (closing)
+        {
+            return;
+        }
+        LayoutDetails();
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = !controller || IsTyping;
+        GetComponent<GraphicRaycaster>().enabled = true;
+        if (!controller && fade.interactable && (!difficultyPopup.activeSelf || difficultyMotion.IsReady)
+            && (!keyboard.IsOpen || keyboard.IsReady))
+        {
+            pointerModule.ProcessPointer();
+        }
+    }
+
+    internal void HandleNavigation()
+    {
+        if (closing || tabs.IsMoving || !fade.interactable || difficultyPopup.activeSelf && !difficultyMotion.IsReady
+            || keyboard.IsOpen && !keyboard.IsReady || !Application.isFocused || Time.frameCount == shownFrame)
+        {
+            return;
+        }
+        var mouse = (Vector3)pointerInput.mousePosition;
+        var wheel = pointerInput.mouseScrollDelta.y;
+        if ((mouse - mousePosition).sqrMagnitude > 4f || pointerInput.GetMouseButtonDown(0) || wheel != 0f)
+        {
+            UseKeyboard();
+        }
+        mousePosition = mouse;
+        var direction = Vector2Int.zero;
+        var submit = false;
+        var controllerMove = false;
+        if (ReInput.isReady)
+        {
+            foreach (var joystick in ReInput.players.GetPlayer(0).controllers.Joysticks)
+            {
+                var pad = joystick.GetTemplate<IGamepadTemplate>();
+                if (pad == null)
+                {
+                    continue;
+                }
+                var stick = pad.leftStick.value;
+                var movement = new Vector2(
+                    pad.dPad.right.value ? 1f : pad.dPad.left.value ? -1f : stick.x,
+                    pad.dPad.up.value ? 1f : pad.dPad.down.value ? -1f : stick.y);
+                var moving = movement.sqrMagnitude >= 0.25f;
+                var scrollAxis = pad.rightStick.value.y;
+                var scrolling = Mathf.Abs(scrollAxis) > 0.25f;
+                var active = moving || scrolling || pad.a.justPressed || pad.b.justPressed
+                    || pad.leftBumper.justPressed || pad.rightBumper.justPressed;
+                if (active)
+                {
+                    JeffBezosController.currentControllerType = ControllerType.Joystick;
+                    JeffBezosController.currentControllerId = joystick.id;
+                    SetController(true);
+                }
+                if (pad.b.justPressed)
+                {
+                    Back();
+                    return;
+                }
+                if (moving)
+                {
+                    direction = Mathf.Abs(movement.x) > Mathf.Abs(movement.y)
+                        ? new Vector2Int(movement.x > 0f ? 1 : -1, 0)
+                        : new Vector2Int(0, movement.y > 0f ? 1 : -1);
+                    controllerMove = true;
+                }
+                if (scrolling && !IsTyping && !difficultyPopup.activeSelf)
+                {
+                    list.OnScroll(new PointerEventData(events)
+                    {
+                        scrollDelta = new Vector2(0f, scrollAxis * Time.unscaledDeltaTime * 480f / list.scrollSensitivity),
+                    });
+                }
+                submit |= pad.a.justPressed;
+                if (pad.leftBumper.justPressed && !difficultyPopup.activeSelf && !IsTyping)
+                {
+                    SetLibrary(false);
+                }
+                if (pad.rightBumper.justPressed && !difficultyPopup.activeSelf && !IsTyping)
+                {
+                    SetLibrary(true);
+                }
+            }
+        }
+        var tab = UnityEngine.Input.GetKeyDown(KeyCode.Tab);
+        if (search.isFocused && !keyboard.IsOpen)
+        {
+            if (submit)
+            {
+                search.DeactivateInputField();
+                if (controller)
+                {
+                    keyboard.Open();
+                }
+                else
+                {
+                    events.SetSelectedGameObject(controls[1].gameObject);
+                    Search();
+                }
+                return;
+            }
+            if (!controllerMove && !tab)
+            {
+                return;
+            }
+            search.DeactivateInputField();
+        }
+        var keyDirection = new Vector2Int(
+            UnityEngine.Input.GetKey(KeyCode.RightArrow) || UnityEngine.Input.GetKey(KeyCode.D) ? 1
+                : UnityEngine.Input.GetKey(KeyCode.LeftArrow) || UnityEngine.Input.GetKey(KeyCode.A) ? -1 : 0,
+            UnityEngine.Input.GetKey(KeyCode.UpArrow) || UnityEngine.Input.GetKey(KeyCode.W) ? 1
+                : UnityEngine.Input.GetKey(KeyCode.DownArrow) || UnityEngine.Input.GetKey(KeyCode.S) ? -1 : 0);
+        var keySubmit = UnityEngine.Input.GetKeyDown(KeyCode.Return) || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter)
+            || UnityEngine.Input.GetKeyDown(KeyCode.Space);
+        if (keyDirection != Vector2Int.zero || tab || keySubmit)
+        {
+            UseKeyboard();
+        }
+        if (keyDirection != Vector2Int.zero)
+        {
+            direction = keyDirection.y == 0 ? keyDirection : new Vector2Int(0, keyDirection.y);
+        }
+        if (tab)
+        {
+            var backwards = UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift);
+            Navigate(Vector2Int.zero, backwards ? -1 : 1);
+        }
+        var move = direction.x + direction.y * 2;
+        if (move != 0 && (move != lastDirection || Time.unscaledTime >= nextMove))
+        {
+            Navigate(direction);
+            nextMove = Time.unscaledTime + (move == lastDirection ? 0.12f : 0.35f);
+        }
+        lastDirection = move;
+        submit |= keySubmit;
+        if (submit)
+        {
+            var control = events.currentSelectedGameObject?.GetComponent<Selectable>();
+            if (control == null || !control.interactable)
+            {
+                Navigate(Vector2Int.zero, 1);
+            }
+            else if (control is Button button)
+            {
+                button.OnSubmit(new BaseEventData(events));
+            }
+            else if (control == search)
+            {
+                if (controller)
+                {
+                    keyboard.Open();
+                }
+                else
+                {
+                    BeatNetSounds.Play(BeatNetSound.Confirm);
+                    search.ActivateInputField();
+                }
+            }
+        }
+    }
+
+    private void UseKeyboard()
+    {
+        JeffBezosController.currentControllerType = ControllerType.Keyboard;
+        JeffBezosController.currentControllerId = 0;
+        SetController(false);
+    }
+
+    private void ScrollList(float distance)
+    {
+        var overflow = list.content.rect.height - list.viewport.rect.height;
+        if (overflow > 0f)
+        {
+            list.StopMovement();
+            list.verticalNormalizedPosition = Mathf.Clamp01(list.verticalNormalizedPosition + distance / overflow);
+        }
+    }
+
+    private void RevealRow(int index)
+    {
+        var top = index * 86f;
+        var offset = list.content.anchoredPosition.y;
+        var bottom = top + 78f;
+        if (top < offset)
+        {
+            ScrollList(offset - top);
+        }
+        else if (bottom > offset + list.viewport.rect.height)
+        {
+            ScrollList(offset + list.viewport.rect.height - bottom);
+        }
+    }
+
+    private void Navigate(Vector2Int direction, int step = 0)
+    {
+        if (keyboard.IsOpen)
+        {
+            keyboard.Navigate(direction, step);
+            return;
+        }
+        var current = events.currentSelectedGameObject?.GetComponent<Selectable>();
+        if (difficultyPopup.activeSelf)
+        {
+            var choices = difficultyChoices.Where(button => button.gameObject.activeSelf).Cast<Selectable>().Append(difficultyBack).ToList();
+            var points = choices.Select(control =>
+            {
+                var rect = (RectTransform)control.transform;
+                var center = difficultyDialog.InverseTransformPoint(rect.TransformPoint(rect.rect.center));
+                return new NavigationPoint(center.x, center.y, control.interactable);
+            }).ToArray();
+            var choice = step != 0 ? BeatNetNavigation.Step(points, choices.IndexOf(current!), step)
+                : BeatNetNavigation.Find(points, choices.IndexOf(current!), direction.x, direction.y, preferAligned: true);
+            if (choice >= 0 && choices[choice] != current)
+            {
+                BeatNetSounds.Move(direction, step);
+                events.SetSelectedGameObject(choices[choice].gameObject);
+            }
+            return;
+        }
+        Selectable? target = null;
+        var row = current is Button button ? rows.IndexOf(button) : -1;
+        if (step == 0 && direction.x > 0 && row >= 0)
+        {
+            target = difficulty.gameObject.activeInHierarchy && difficulty.interactable ? difficulty
+                : install.gameObject.activeInHierarchy && install.interactable ? install
+                : play.gameObject.activeInHierarchy && play.interactable ? play
+                : uninstall.gameObject.activeInHierarchy && uninstall.interactable ? uninstall : close;
+        }
+        else if (step == 0 && direction.x < 0 && (current == install || current == play || current == uninstall || current == difficulty) && selectedIndex >= 0)
+        {
+            target = rows[selectedIndex];
+        }
+        else
+        {
+            var points = new List<NavigationPoint>(controls.Count);
+            foreach (var control in controls)
+            {
+                var rect = (RectTransform)control.transform;
+                var center = window.InverseTransformPoint(rect.TransformPoint(rect.rect.center));
+                points.Add(new NavigationPoint(center.x, center.y, control.gameObject.activeInHierarchy && control.interactable
+                    && (!controller || control != exploreTab && control != libraryTab)));
+            }
+            var index = step != 0 ? BeatNetNavigation.Step(points, controls.IndexOf(current!), step)
+                : BeatNetNavigation.Find(points, controls.IndexOf(current!), direction.x, direction.y);
+            if (index >= 0)
+            {
+                target = controls[index];
+            }
+        }
+        if (target == null || target == current)
+        {
+            return;
+        }
+        var selectedRow = target is Button rowButton ? rows.IndexOf(rowButton) : -1;
+        if (selectedRow >= 0 && selectedRow != selectedIndex)
+        {
+            BeatNetSounds.Play(BeatNetSound.Confirm);
+        }
+        else
+        {
+            BeatNetSounds.Move(direction, step);
+        }
+        events.SetSelectedGameObject(target.gameObject);
+        if (selectedRow >= 0)
+        {
+            RevealRow(selectedRow);
+            SelectRow(selectedRow);
+        }
+    }
+
+    private void CancelWork()
+    {
+        cancellation?.Cancel();
+        if (pending != null)
+        {
+            _ = pending.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+        cancellation?.Dispose();
+        cancellation = null;
+        pending = null;
+        finish = null;
+    }
+
+    private void OnDisable()
+    {
+        pageFrames.Clear();
+        detailFrames.Clear();
+        drawingPage = drawingDetails = false;
+        visible = false;
+        closing = false;
+        closeFrame = Time.frameCount;
+        if (inputOwner != null)
+        {
+            RestorePerspective();
+            audioPreview.Stop();
+            keyboard.Hide();
+            difficultyPopup.SetActive(false);
+            cancellation?.Cancel();
+            updateCancellation?.Cancel();
+            search.DeactivateInputField();
+            RestoreCursor();
+        }
+    }
+
+    private void OnDestroy()
+    {
+        firstCancellation.Cancel();
+        firstCancellation.Dispose();
+        CancelWork();
+        updateCancellation?.Cancel();
+        updateCancellation?.Dispose();
+        RestoreInput(true);
+        if (clientReady != null)
+        {
+            _ = clientReady.ContinueWith(task =>
+            {
+                if (task.Status == TaskStatus.RanToCompletion)
+                {
+                    task.Result.Dispose();
+                }
+                else
+                {
+                    _ = task.Exception;
+                }
+            }, TaskScheduler.Default);
+        }
+        audioPreview.Dispose();
+        ui.Dispose();
+    }
+}
+
+internal sealed class BeatNetFrames
+{
+    private readonly Queue<Action> steps = new();
+    private readonly System.Diagnostics.Stopwatch watch = new();
+
+    internal bool IsPending => steps.Count > 0;
+    internal double LongestMilliseconds { get; private set; }
+
+    internal void Add(Action step) => steps.Enqueue(step);
+
+    internal void Clear()
+    {
+        steps.Clear();
+        LongestMilliseconds = 0d;
+    }
+
+    internal void Tick()
+    {
+        if (steps.Count == 0)
+        {
+            return;
+        }
+        var step = steps.Dequeue();
+        watch.Restart();
+        try
+        {
+            step();
+        }
+        finally
+        {
+            watch.Stop();
+            LongestMilliseconds = Math.Max(LongestMilliseconds, watch.Elapsed.TotalMilliseconds);
+        }
+    }
+}
+
+
+
