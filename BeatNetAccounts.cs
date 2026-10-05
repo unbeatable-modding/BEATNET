@@ -94,18 +94,27 @@ internal sealed class BeatNetAccounts : IDisposable
 
     private static async Task<string> SteamAvatar(string id, CancellationToken token)
     {
-        if (!System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9]{17}$")) { return string.Empty; }
+        if (!System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9]{17}$"))
+        {
+            return string.Empty;
+        }
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
             using var response = await http.GetAsync("https://steamcommunity.com/profiles/" + id + "?xml=1", token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             var xml = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-            if (xml.Length > 262144) { return string.Empty; }
+            if (xml.Length > 262144)
+            {
+                return string.Empty;
+            }
             using var reader = System.Xml.XmlReader.Create(new StringReader(xml), new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null });
             return XDocument.Load(reader).Root?.Element("avatarFull")?.Value ?? string.Empty;
         }
-        catch (Exception) { return string.Empty; }
+        catch (Exception)
+        {
+            return string.Empty;
+        }
     }
 
     internal void Login(string name, string password, bool register)

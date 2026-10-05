@@ -96,7 +96,7 @@ internal sealed class BeatNetFilters
             {
                 Difficulties = Slots.Where(draft.Contains).ToArray();
                 Difficulty.GetComponentInChildren<TextMeshProUGUI>(true).text = Difficulties.Length == 0 ? "Difficulties / All"
-                    : "Difficulties / " + (Difficulties.Length == 1 ? Difficulties[0] : Difficulties.Length + " selected");
+                    : "Difficulties / " + (Difficulties.Length == 1 ? BeatNetScoreText.Difficulty(Difficulties[0].ToLowerInvariant()) : Difficulties.Length + " selected");
                 Hide();
                 changed();
             });
@@ -130,7 +130,7 @@ internal sealed class BeatNetFilters
         for (var index = 0; index < Slots.Length; index++)
         {
             var selected = draft.Contains(Slots[index]);
-            choices[index + 1].GetComponentInChildren<TextMeshProUGUI>(true).text = (selected ? "[x] " : "[ ] ") + Slots[index];
+            choices[index + 1].GetComponentInChildren<TextMeshProUGUI>(true).text = (selected ? "[x] " : "[ ] ") + BeatNetScoreText.Difficulty(Slots[index].ToLowerInvariant());
             ui.Style(choices[index + 1], selected: selected);
         }
     }

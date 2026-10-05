@@ -109,10 +109,10 @@ internal static class ChartFiles
         return null;
     }
 
-    internal static string[] GetDifficulties(string root)
+    internal static string[] GetDifficulties(string root, bool recursive = true)
     {
         var found = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var folder in new[] { root }.Concat(GetSongFolders(root)))
+        foreach (var folder in recursive ? new[] { root }.Concat(GetSongFolders(root)) : new[] { root })
         {
             foreach (var chart in GetCharts(folder))
             {
@@ -153,6 +153,21 @@ internal static class ChartFiles
             IgnoreInaccessible = true,
             AttributesToSkip = FileAttributes.ReparsePoint
         }).OrderBy(path => path, StringComparer.Ordinal);
+    }
+
+    internal static IEnumerable<string> GetCustomFolders(string root)
+    {
+        var folders = Directory.EnumerateDirectories(root, "*", new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        }).OrderBy(path => path, StringComparer.Ordinal);
+        foreach (var folder in folders)
+        {
+            yield return folder;
+            if (!Path.GetFileName(folder).Equals("BEATNET_beatmaps", StringComparison.OrdinalIgnoreCase)) { continue; }
+            foreach (var child in GetSongFolders(folder)) { yield return child; }
+        }
     }
 
     private static bool IsChart(string path)

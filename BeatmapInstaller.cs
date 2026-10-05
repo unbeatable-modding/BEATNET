@@ -102,16 +102,17 @@ internal sealed class BeatmapInstaller
                         Revision = new BeatmapRevision { Id = record.RevisionId, Number = record.RevisionNumber },
                         LocalPath = folder, InstalledSize = record.Size,
                     };
-                    ReadMetadata(entry, folder);
+                    ReadMetadata(entry, folder, true);
                     result.Add(entry);
                     managed.Add(folder);
                 }
-                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is JsonException)
+                catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException || error is JsonException)
                 {
+                    CustomSongLoader.Logger?.LogWarning($"skipped library map {Path.GetFileName(folder)} / {error.Message}");
                 }
             }
         }
-        foreach (var folder in ChartFiles.GetSongFolders(customSongs))
+        foreach (var folder in ChartFiles.GetCustomFolders(customSongs))
         {
             if (managed.Any(root => folder.Equals(root, StringComparison.OrdinalIgnoreCase)
                 || folder.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
@@ -125,21 +126,24 @@ internal sealed class BeatmapInstaller
                     continue;
                 }
                 var entry = new BeatmapEntry { Id = "local:" + Path.GetRelativePath(customSongs, folder), LocalPath = folder };
-                ReadMetadata(entry, folder);
+                ReadMetadata(entry, folder, folder.Equals(songs, StringComparison.OrdinalIgnoreCase)
+                    || folder.StartsWith(songs + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
                 result.Add(entry);
             }
-            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException)
+            catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException)
             {
+                CustomSongLoader.Logger?.LogWarning($"skipped library map {Path.GetFileName(folder)} / {error.Message}");
             }
         }
         return result.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    private static void ReadMetadata(BeatmapEntry entry, string folder)
+    private static void ReadMetadata(BeatmapEntry entry, string folder, bool recursive)
     {
         CheckParents(folder);
-        entry.Difficulties = ChartFiles.GetDifficulties(folder);
-        entry.CoverPath = new[] { folder }.Concat(ChartFiles.GetSongFolders(folder))
+        var folders = (recursive ? new[] { folder }.Concat(ChartFiles.GetSongFolders(folder)) : new[] { folder }).ToArray();
+        entry.Difficulties = ChartFiles.GetDifficulties(folder, recursive);
+        entry.CoverPath = folders
             .Select(ChartFiles.GetCover).FirstOrDefault(path => path != null);
         if (entry.CoverPath != null)
         {
@@ -148,7 +152,7 @@ internal sealed class BeatmapInstaller
         }
         if (entry.Title.Length == 0 || entry.Artist.Length == 0 || entry.Creator.Length == 0)
         {
-            var chart = new[] { folder }.Concat(ChartFiles.GetSongFolders(folder))
+            var chart = folders
                 .SelectMany(ChartFiles.GetCharts).FirstOrDefault();
             if (chart.Path != null && new FileInfo(chart.Path).Length <= 16_777_216)
             {
@@ -231,6 +235,7 @@ internal sealed class BeatmapInstaller
             var entryCount = 0;
             long expanded = 0;
             long received = 0;
+            var archives = new List<string>();
             for (var index = 0; index < beatmap.Files.Length; index++)
             {
                 token.ThrowIfCancellationRequested();
@@ -243,8 +248,13 @@ internal sealed class BeatmapInstaller
                         progress($"Downloading {(received + count) * 100 / total}%");
                     }, token).ConfigureAwait(false);
                 received += file.Size;
-                progress("Checking archive");
-                Extract(archive, content, entries, ref entryCount, ref expanded, token);
+                archives.Add(archive);
+            }
+            progress("Checking archive");
+            var archiveRoot = ArchiveRoot(archives, token);
+            foreach (var archive in archives)
+            {
+                Extract(archive, content, archiveRoot, entries, ref entryCount, ref expanded, token);
             }
 
             progress("Checking beatmaps");
@@ -276,7 +286,31 @@ internal sealed class BeatmapInstaller
         }
     }
 
-    private void Extract(string archivePath, string folder, HashSet<string> names, ref int entryCount, ref long expanded, CancellationToken token)
+    private static string ArchiveRoot(List<string> archives, CancellationToken token)
+    {
+        string? root = null;
+        foreach (var path in archives)
+        {
+            using var archive = ZipFile.OpenRead(path);
+            foreach (var entry in archive.Entries)
+            {
+                token.ThrowIfCancellationRequested();
+                var name = entry.FullName.Replace('\\', '/');
+                var directory = name.EndsWith("/", StringComparison.Ordinal);
+                root ??= directory ? name : name.Substring(0, name.LastIndexOf('/') + 1);
+                while (!name.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                    && (!directory || !root.StartsWith(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var parent = root.TrimEnd('/').LastIndexOf('/');
+                    root = parent < 0 ? string.Empty : root.Substring(0, parent + 1);
+                }
+                if (root.Length == 0) { return string.Empty; }
+            }
+        }
+        return root ?? string.Empty;
+    }
+
+    private void Extract(string archivePath, string folder, string root, HashSet<string> names, ref int entryCount, ref long expanded, CancellationToken token)
     {
         const long expandedLimit = 2_147_483_648L;
         using var archive = ZipFile.OpenRead(archivePath);
@@ -294,6 +328,12 @@ internal sealed class BeatmapInstaller
             }
             var name = entry.FullName.Replace('\\', '/');
             var directory = name.EndsWith("/", StringComparison.Ordinal);
+            PathParts(directory ? name.Substring(0, name.Length - 1) : name);
+            if (root.Length > 0)
+            {
+                if (directory && root.StartsWith(name, StringComparison.OrdinalIgnoreCase)) { continue; }
+                name = name.Substring(root.Length);
+            }
             var path = SafePath(folder, directory ? name.Substring(0, name.Length - 1) : name);
             if (directory)
             {
@@ -334,7 +374,7 @@ internal sealed class BeatmapInstaller
         }
     }
 
-    private static string SafePath(string root, string name)
+    private static string[] PathParts(string name)
     {
         var parts = name.Replace('\\', '/').Split('/');
         foreach (var part in parts)
@@ -346,6 +386,12 @@ internal sealed class BeatmapInstaller
                 throw new InvalidDataException("The beatmap contains an unsafe file path");
             }
         }
+        return parts;
+    }
+
+    private static string SafePath(string root, string name)
+    {
+        var parts = PathParts(name);
         var path = Path.GetFullPath(Path.Combine(root, Path.Combine(parts)));
         var prefix = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
@@ -368,16 +414,12 @@ internal sealed class BeatmapInstaller
                     throw new InvalidDataException("A chart file is too large");
                 }
                 var audio = ReadAudioPath(chart.Path);
-                if (audio == null && chart.Slot == null && Path.GetExtension(chart.Path).Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                if (audio != null && audio.Length > 0)
                 {
-                    continue;
+                    SafePath(folder, audio);
                 }
-                if (audio == null || !File.Exists(SafePath(folder, audio)))
-                {
-                    throw new InvalidDataException("A chart is missing its audio file");
-                }
-                count++;
             }
+            count += ChartFiles.GetDifficulties(folder, false).Length;
         }
         if (count == 0)
         {

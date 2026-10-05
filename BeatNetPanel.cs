@@ -148,9 +148,6 @@ public sealed class BeatNetPanel : MonoBehaviour
     private bool openRequested;
     private Canvas canvas = null!;
     private bool visible;
-    private bool timedOpen;
-    private bool timedPage;
-    private bool timedDetails;
     private bool drawingPage;
     private bool drawingDetails;
     private string laidOutTitle = string.Empty;
@@ -160,8 +157,6 @@ public sealed class BeatNetPanel : MonoBehaviour
     private string laidOutClear = string.Empty;
     private Task<CatalogPage>? firstPage;
     private readonly CancellationTokenSource firstCancellation = new();
-    private float openingUntil;
-    private float longestOpeningFrame;
     private bool cursorVisible;
     private CursorLockMode cursorLock;
     private Vector3 mousePosition;
@@ -357,7 +352,8 @@ public sealed class BeatNetPanel : MonoBehaviour
         rank.alignment = TextAlignmentOptions.BottomLeft;
         rank.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
         cleared = ui.Text(content, "", 80f * 13.64f / 48.1f, 1140f, 424f, 192f, 36f, BeatNetColor.Text);
-        cleared.richText = false;
+        cleared.richText = true;
+        cleared.fontStyle = FontStyles.LowerCase;
         cleared.characterSpacing = 11f;
         cleared.alignment = TextAlignmentOptions.BottomRight;
         cleared.overflowMode = TextOverflowModes.Overflow;
@@ -375,6 +371,8 @@ public sealed class BeatNetPanel : MonoBehaviour
             levelLabel.richText = true;
             levelLabels.Add(levelLabel);
             var name = ui.Text(content, "", 21f, left + 56f, top + 2f, 250f, 32f, BeatNetColor.Text, BeatNetFont.Button);
+            name.richText = true;
+            name.fontStyle = FontStyles.LowerCase;
             name.alignment = TextAlignmentOptions.MidlineLeft;
             difficultyNames.Add(name);
         }
@@ -384,6 +382,8 @@ public sealed class BeatNetPanel : MonoBehaviour
         updateLabel = ui.Text(content, "", 18f, TextLeft + 278f, 646f, 352f, 30f, BeatNetColor.Accent);
         updateLabel.alignment = TextAlignmentOptions.Right;
         difficulty = ui.Button(content, "", TextLeft, 696f, TextWidth, 48f);
+        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).richText = true;
+        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).fontStyle = FontStyles.LowerCase;
         ((BeatNetControl)difficulty).Sound = BeatNetSound.None;
         ((BeatNetControl)difficulty).HoverSound = BeatNetSound.Hover;
         difficulty.onClick.AddListener(OpenDifficulties);
@@ -542,12 +542,14 @@ public sealed class BeatNetPanel : MonoBehaviour
             else
             {
                 button = ui.Button(difficultyList, "", 0f, index * 62f, 600f, 54f);
+                button.GetComponentInChildren<TextMeshProUGUI>(true).richText = true;
+                button.GetComponentInChildren<TextMeshProUGUI>(true).fontStyle = FontStyles.LowerCase;
                 ((BeatNetControl)button).HoverOnly = true;
                 difficultyChoices.Add(button);
             }
             button.gameObject.SetActive(true);
             var song = PlayableSongs().First(item => item.BeatmapInfo.difficulty == value);
-            button.GetComponentInChildren<TextMeshProUGUI>(true).text = song.Beatmap.metadata.GetDifficulty(value);
+            button.GetComponentInChildren<TextMeshProUGUI>(true).text = BeatNetScoreText.Difficulty(song.Beatmap.metadata.GetDifficulty(value));
             button.onClick.RemoveAllListeners();
             button.onClick.AddListener(() =>
             {
@@ -697,7 +699,6 @@ public sealed class BeatNetPanel : MonoBehaviour
         {
             return;
         }
-        var watch = timedOpen ? null : System.Diagnostics.Stopwatch.StartNew();
         previousEvents = EventSystem.current;
         previousSelection = previousEvents?.currentSelectedGameObject;
         cursorVisible = Cursor.visible;
@@ -727,11 +728,8 @@ public sealed class BeatNetPanel : MonoBehaviour
         {
             system.enabled = false;
         }
-        var inputTime = watch?.ElapsedMilliseconds ?? 0L;
         motion.Show();
-        var visibilityTime = watch?.ElapsedMilliseconds ?? 0L;
         BeatNetSounds.Play(BeatNetSound.Confirm);
-        var soundTime = watch?.ElapsedMilliseconds ?? 0L;
         ui.RefreshTheme();
         EventSystem.current = events;
         events.SetSelectedGameObject(controller ? controls[1].gameObject : null);
@@ -746,12 +744,6 @@ public sealed class BeatNetPanel : MonoBehaviour
         catch (Exception error)
         {
             ShowError(error);
-        }
-        if (watch != null)
-        {
-            timedOpen = true;
-            openingUntil = Time.unscaledTime + 1f;
-            CustomSongLoader.Logger?.LogInfo($"beatnet opening input {inputTime} ms visibility {visibilityTime - inputTime} ms sound {soundTime - visibilityTime} ms page {watch.ElapsedMilliseconds - soundTime} ms");
         }
     }
 
@@ -1234,7 +1226,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             var row = index;
             detailFrames.Add(() =>
             {
-                FadeText(difficultyNames[row], name);
+                FadeText(difficultyNames[row], BeatNetScoreText.Difficulty(name));
                 FadeText(difficultyLevels[row], slot.Length == 0 ? string.Empty : "<mspace=0.82em>" + level.ToString("00"));
                 levelLabels[row].text = slot.Length == 0 ? string.Empty : "<mspace=0.80em>LV";
             });
@@ -1565,7 +1557,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         }
         difficulty.interactable = choices.Length > 0 && !drawingDetails && !installing && pending == null;
         var currentSong = choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == playDifficulty);
-        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).text = currentSong == null ? "No playable difficulty" : currentSong.Beatmap.metadata.GetDifficulty(playDifficulty);
+        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).text = currentSong == null ? "No playable difficulty" : BeatNetScoreText.Difficulty(currentSong.Beatmap.metadata.GetDifficulty(playDifficulty));
         if (library)
         {
             SetScoreVisible(currentSong != null);
@@ -1648,7 +1640,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         if (selected != null && !closing)
         {
             var record = exploreScores.Current;
-            ShowScore(record.Score, record.Accuracy, record.NoMiss, record.Cleared, exploreScores.Label,
+            ShowScore(record.Score, record.Accuracy, record.NoMiss, record.Cleared, BeatNetScoreText.Difficulty(exploreScores.Label),
                 "global:" + selected.Id + ":" + selected.Revision.Id + ":" + modifiers + ":" + record.Difficulty);
         }
         if (exploreScoreError != exploreScores.Error)
@@ -1818,15 +1810,6 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void Update()
     {
-        if (openingUntil > 0f && Time.frameCount > shownFrame)
-        {
-            longestOpeningFrame = Mathf.Max(longestOpeningFrame, Time.unscaledDeltaTime * 1000f);
-            if (Time.unscaledTime >= openingUntil)
-            {
-                openingUntil = 0f;
-                CustomSongLoader.Logger?.LogInfo($"beatnet longest opening frame {Mathf.RoundToInt(longestOpeningFrame)} ms");
-            }
-        }
         backgroundPerspective?.Tick();
         windowPerspective.Set(difficultyPopup.activeSelf || accountPanel.IsOpen || filters.IsOpen ? 0.8f : 1.4f);
         windowPerspective.Tick();
@@ -1850,20 +1833,10 @@ public sealed class BeatNetPanel : MonoBehaviour
             if (pageFrames.IsPending)
             {
                 pageFrames.Tick();
-                if (!pageFrames.IsPending && !timedPage)
-                {
-                    timedPage = true;
-                    CustomSongLoader.Logger?.LogInfo($"beatnet page step max {Math.Round(pageFrames.LongestMilliseconds)} ms");
-                }
             }
             else if (detailFrames.IsPending)
             {
                 detailFrames.Tick();
-                if (!detailFrames.IsPending && !timedDetails)
-                {
-                    timedDetails = true;
-                    CustomSongLoader.Logger?.LogInfo($"beatnet detail step max {Math.Round(detailFrames.LongestMilliseconds)} ms");
-                }
             }
         }
         catch (Exception error)
@@ -2280,17 +2253,14 @@ public sealed class BeatNetPanel : MonoBehaviour
 internal sealed class BeatNetFrames
 {
     private readonly Queue<Action> steps = new();
-    private readonly System.Diagnostics.Stopwatch watch = new();
 
     internal bool IsPending => steps.Count > 0;
-    internal double LongestMilliseconds { get; private set; }
 
     internal void Add(Action step) => steps.Enqueue(step);
 
     internal void Clear()
     {
         steps.Clear();
-        LongestMilliseconds = 0d;
     }
 
     internal void Tick()
@@ -2300,16 +2270,7 @@ internal sealed class BeatNetFrames
             return;
         }
         var step = steps.Dequeue();
-        watch.Restart();
-        try
-        {
-            step();
-        }
-        finally
-        {
-            watch.Stop();
-            LongestMilliseconds = Math.Max(LongestMilliseconds, watch.Elapsed.TotalMilliseconds);
-        }
+        step();
     }
 }
 

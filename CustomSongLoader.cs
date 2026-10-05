@@ -149,7 +149,7 @@ internal static class CustomSongLoader
         }
 
         var difficulties = BeatmapIndex.defaultIndex.Difficulties;
-        foreach (var folder in ChartFiles.GetSongFolders(root))
+        foreach (var folder in ChartFiles.GetCustomFolders(root))
         {
             var song = LoadFolder(root, folder, category, sections, difficulties);
             if (song != null)

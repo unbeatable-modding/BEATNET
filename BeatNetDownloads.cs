@@ -154,7 +154,6 @@ internal sealed class BeatNetDownloads : IDisposable
             catch (Exception)
             {
                 Error = $"Download failed / {completed.Title}";
-                CustomSongLoader.Logger?.LogWarning("beatnet download failed");
             }
             ids.Remove(completed.Id);
             pending = null;

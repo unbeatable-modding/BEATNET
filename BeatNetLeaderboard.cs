@@ -178,7 +178,7 @@ internal sealed class BeatNetProfiles : PlayerProfileProviderBase
         var avatar = (string?)row["avatar"] ?? string.Empty;
         if (Images.TryGetValue(avatar, out var texture)) { profile.playerImage = texture; }
         callback(profile);
-        if (profile.playerImage != placeholder || !System.Text.RegularExpressions.Regex.IsMatch(avatar, @"^https://avatars\.(?:steamstatic\.com|akamai\.steamstatic\.com)/[0-9a-f]{40}(?:_(?:full|medium))?\.jpg$")) { return; }
+        if (profile.playerImage != placeholder || !System.Text.RegularExpressions.Regex.IsMatch(avatar, @"^https://avatars\.(?:(?:akamai|fastly)\.)?steamstatic\.com/[0-9a-f]{40}(?:_(?:full|medium))?\.jpg$")) { return; }
         var accounts = Plugin.Accounts;
         if (accounts == null) { return; }
         if (!Pending.TryGetValue(avatar, out var task))
@@ -211,7 +211,10 @@ internal sealed class BeatNetProfiles : PlayerProfileProviderBase
                     callback(profile);
                 });
             }
-            catch (Exception) { accounts.Post(() => Pending.Remove(avatar)); }
+            catch (Exception)
+            {
+                accounts.Post(() => Pending.Remove(avatar));
+            }
         }
     }
 

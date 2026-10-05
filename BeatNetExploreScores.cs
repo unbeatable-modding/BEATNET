@@ -93,6 +93,8 @@ internal sealed class BeatNetExploreScores : IDisposable
 
 internal static class BeatNetScoreText
 {
+    internal static string Difficulty(string value) => value.Length == 0 || value.EndsWith(".", StringComparison.Ordinal) ? value : value + ".";
+
     internal static string ClearState(bool cleared, bool fullCombo, bool perfectCombo) => !cleared ? string.Empty
         : perfectCombo ? "cleared. / perfect combo." : fullCombo ? "cleared. / full combo." : "cleared.";
 }
