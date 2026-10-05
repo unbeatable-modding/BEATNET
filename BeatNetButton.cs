@@ -241,6 +241,13 @@ public sealed class BeatNetButton : MonoBehaviour
         }
     }
 
+    internal bool OpenUpdate(string id)
+    {
+        if (!IsMainSongSelect || panel == null) { return false; }
+        panel.RestoreInput();
+        return panel.ShowLibrary(id);
+    }
+
     private static bool OpenKeyPressed() => UnityEngine.Input.GetKeyDown(KeyCode.Alpha2) || UnityEngine.Input.GetKeyDown(KeyCode.Keypad2);
 
     private void OnDisable()

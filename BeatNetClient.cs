@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -32,9 +34,9 @@ internal sealed class BeatNetClient : IDisposable
         http.DefaultRequestHeaders.UserAgent.ParseAdd("BEATNET/1.0.0");
     }
 
-    internal async Task<CatalogPage> List(string query, int offset, int limit, CancellationToken token)
+    internal async Task<CatalogPage> List(string query, int offset, int limit, CancellationToken token, string sorting = "title", string[]? difficulties = null)
     {
-        var path = $"/api/beatmaps?query={Uri.EscapeDataString(query)}&offset={offset}&limit={limit}";
+        var path = $"/api/beatmaps?query={Uri.EscapeDataString(query)}&offset={offset}&limit={limit}&sorting={sorting}&difficulties={Uri.EscapeDataString(string.Join(",", difficulties ?? Array.Empty<string>()))}";
         var page = await ReadJson<CatalogPage>(path, token).ConfigureAwait(false);
         if (page.Items == null || page.Items.Length > limit || page.Total < 0 || page.Offset != offset || page.Limit != limit)
         {
@@ -45,6 +47,23 @@ internal sealed class BeatNetClient : IDisposable
             ValidateBeatmap(beatmap);
         }
         return page;
+    }
+
+    internal async Task<RatingSummary[]> Ratings(string[] ids, CancellationToken token)
+    {
+        var result = new List<RatingSummary>();
+        for (var start = 0; start < ids.Length; start += 100)
+        {
+            var batch = ids.Skip(start).Take(100).ToArray();
+            var values = await ReadJson<RatingBatch>("/api/ratings?ids=" + string.Join(",", batch), token).ConfigureAwait(false);
+            if (values.Items == null || values.Items.Length != batch.Length || values.Items.Any(value => !batch.Contains(value.Id)
+                || double.IsNaN(value.Average) || double.IsInfinity(value.Average) || value.Average < 0 || value.Average > 10 || value.Count < 0))
+            {
+                throw new InvalidDataException("The server returned invalid ratings");
+            }
+            result.AddRange(values.Items);
+        }
+        return result.ToArray();
     }
 
     internal async Task<BeatmapEntry> Get(string id, CancellationToken token)

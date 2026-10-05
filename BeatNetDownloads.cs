@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace BEATNET;
 
@@ -10,11 +12,21 @@ internal sealed class BeatNetDownloads : IDisposable
     private readonly Queue<BeatmapEntry> queue = new();
     private readonly HashSet<string> ids = new();
     private readonly CancellationTokenSource cancellation = new();
+    private CancellationTokenSource checks = new();
+    private bool playing;
     private readonly BeatNetClient client = new("http://92.5.175.72");
     private readonly BeatmapInstaller installer;
     private Task<List<BeatmapEntry>>? pending;
     private volatile string progress = string.Empty;
     private volatile float fraction;
+    private readonly Dictionary<string, RevisionJob> revisionJobs = new();
+
+    private sealed class RevisionJob
+    {
+        internal string Revision = string.Empty;
+        internal Task<BeatmapEntry>? Task;
+        internal float RetryAt;
+    }
 
     internal BeatNetDownloads(string dataPath) => installer = new BeatmapInstaller(dataPath);
 
@@ -27,6 +39,76 @@ internal sealed class BeatNetDownloads : IDisposable
     internal string Progress => progress;
     internal float Fraction => fraction;
     internal bool Contains(string id) => ids.Contains(id);
+    internal Dictionary<string, BeatmapEntry> Latest { get; } = new();
+    internal int RevisionVersion { get; private set; }
+
+    internal void CacheRevision(BeatmapEntry entry)
+    {
+        if (Latest.TryGetValue(entry.Id, out var cached)
+            && (cached.Revision.Number > entry.Revision.Number || cached.Revision.Id == entry.Revision.Id)) { return; }
+        Latest[entry.Id] = entry;
+        RevisionVersion++;
+    }
+
+    internal void ObserveRevision(string id, string revision)
+    {
+        if (cancellation.IsCancellationRequested || revision.Length == 0
+            || Latest.TryGetValue(id, out var cached) && cached.Revision.Id == revision) { return; }
+        if (!revisionJobs.TryGetValue(id, out var job))
+        {
+            job = new RevisionJob();
+            revisionJobs[id] = job;
+        }
+        if (job.Revision == revision) { return; }
+        job.Revision = revision;
+        job.RetryAt = 0f;
+    }
+
+    internal void ClearRevision(string id)
+    {
+        if (!revisionJobs.TryGetValue(id, out var job)) { return; }
+        job.Revision = string.Empty;
+        if (job.Task == null) { revisionJobs.Remove(id); }
+    }
+
+    private void CheckRevisions()
+    {
+        foreach (var pair in revisionJobs.ToArray())
+        {
+            var job = pair.Value;
+            if (job.Task?.IsCompleted != true) { continue; }
+            if (job.Revision.Length == 0)
+            {
+                _ = job.Task.Exception;
+                revisionJobs.Remove(pair.Key);
+                continue;
+            }
+            try
+            {
+                var entry = job.Task.GetAwaiter().GetResult();
+                if (entry.Revision.Id == job.Revision)
+                {
+                    CacheRevision(entry);
+                    revisionJobs.Remove(pair.Key);
+                }
+                else { job.RetryAt = Time.unscaledTime + 1f; }
+            }
+            catch (OperationCanceledException) { job.RetryAt = 0f; }
+            catch (Exception) { job.RetryAt = Time.unscaledTime + 30f; }
+            job.Task = null;
+        }
+        var active = revisionJobs.Values.Count(job => job.Task != null);
+        foreach (var pair in revisionJobs)
+        {
+            if (active >= 4) { break; }
+            var job = pair.Value;
+            if (job.Task != null || Time.unscaledTime < job.RetryAt) { continue; }
+            var id = pair.Key;
+            var token = checks.Token;
+            job.Task = Task.Run(() => client.Get(id, token), token);
+            active++;
+        }
+    }
 
     internal int Position(string id)
     {
@@ -54,6 +136,8 @@ internal sealed class BeatNetDownloads : IDisposable
 
     internal void Tick()
     {
+        if (playing) { return; }
+        if (!cancellation.IsCancellationRequested) { CheckRevisions(); }
         if (pending?.IsCompleted == true)
         {
             var completed = Active!;
@@ -95,16 +179,28 @@ internal sealed class BeatNetDownloads : IDisposable
         }, token);
     }
 
+    internal void SetPlaying(bool value)
+    {
+        if (playing == value) { return; }
+        playing = value;
+        if (value) { checks.Cancel(); return; }
+        checks.Dispose();
+        checks = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+    }
+
     public void Dispose()
     {
         cancellation.Cancel();
+        checks.Cancel();
         queue.Clear();
         ids.Clear();
-        var task = pending ?? Task.CompletedTask;
+        var task = Task.WhenAll(revisionJobs.Values.Select(job => job.Task).Where(job => job != null).Cast<Task>()
+            .Append(pending ?? Task.CompletedTask));
         _ = task.ContinueWith(done =>
         {
             _ = done.Exception;
             client.Dispose();
+            checks.Dispose();
             cancellation.Dispose();
         }, TaskScheduler.Default);
     }

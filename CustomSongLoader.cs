@@ -306,6 +306,7 @@ internal static class CustomSongLoader
                 }
             }
             Logger?.LogInfo($"custom database {count} difficulties");
+            Plugin.Accounts?.RegisterSongs();
         }
     }
 

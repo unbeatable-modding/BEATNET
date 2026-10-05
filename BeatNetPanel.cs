@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Arcade.UI;
 using Arcade.UI.SongSelect;
+using Newtonsoft.Json.Linq;
 using Rewired;
 using TMPro;
 using UnityEngine;
@@ -50,6 +51,12 @@ public sealed class BeatNetPanel : MonoBehaviour
     private BeatNetUi ui = null!;
     private Task<BeatNetClient> clientReady = null!;
     private BeatNetKeyboard keyboard = null!;
+    private BeatNetAccountPanel accountPanel = null!;
+    private BeatNetRatings ratings = null!;
+    private BeatNetFilters filters = null!;
+    private string ratingError = string.Empty;
+    private BeatNetExploreScores exploreScores = null!;
+    private string exploreScoreError = string.Empty;
     private BeatNetInput pointerInput = null!;
     private BeatNetInputModule pointerModule = null!;
     private GameObject? previousSelection;
@@ -117,12 +124,12 @@ public sealed class BeatNetPanel : MonoBehaviour
     private BeatmapEntry? selected;
     private List<BeatmapEntry> libraryEntries = new();
     private Dictionary<string, BeatmapEntry> latest = new();
-    private Task<(Dictionary<string, BeatmapEntry> Entries, bool Failed)>? updateCheck;
-    private CancellationTokenSource? updateCancellation;
     private bool library;
-    private bool updateFailed;
     private bool removing;
     private string playDifficulty = string.Empty;
+    private string focusId = string.Empty;
+    private int revisionVersion = -1;
+    private int metadataVersion = -1;
     private CancellationTokenSource? cancellation;
     private Task? pending;
     private Action? finish;
@@ -163,7 +170,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     internal bool IsOpen => prepared && visible;
     internal bool KeepCursor { get; private set; }
-    internal bool IsTyping => IsOpen && (search.isFocused || keyboard.IsOpen);
+    internal bool IsTyping => IsOpen && (search.isFocused || keyboard.IsOpen || accountPanel.IsOpen);
     internal static bool BlocksGameInput { get; private set; }
 
     internal static BeatNetPanel Create(Transform parent, TextMeshProUGUI label, Graphic background, Button back, TextMeshProUGUI number)
@@ -283,7 +290,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         controls.Add(find);
         controls.Add(exploreTab);
         controls.Add(libraryTab);
-        countLabel = ui.Text(content, "", 17f, 40f, 286f, ListWidth, 30f, BeatNetColor.Muted);
+        countLabel = ui.Text(content, "", 17f, 668f, 286f, 214f, 30f, BeatNetColor.Muted);
         countLabel.alignment = TextAlignmentOptions.Right;
         list = ui.List(content, 40f, 326f, ListWidth, 508f);
         listArea = list.viewport;
@@ -338,19 +345,20 @@ public sealed class BeatNetPanel : MonoBehaviour
         artist.alignment = TextAlignmentOptions.TopLeft;
         mapper = ui.Text(content, "", 22f, TextLeft, 392f, TextWidth, 36f, BeatNetColor.Muted);
         mapper.alignment = TextAlignmentOptions.TopLeft;
-        highscore = ui.Text(content, "", 80f, TextLeft, 424f, 472f, 80f, BeatNetColor.Text, BeatNetFont.Score);
+        highscore = ui.Text(content, "", 56f, TextLeft, 424f, 360f, 80f, BeatNetColor.Text, BeatNetFont.Score);
         highscore.richText = true;
         highscore.alignment = TextAlignmentOptions.BottomLeft;
         highscore.enableAutoSizing = true;
-        highscore.fontSizeMin = 64f;
-        highscore.fontSizeMax = 80f;
+        highscore.fontSizeMin = 48f;
+        highscore.fontSizeMax = 56f;
         highscore.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
-        rank = ui.Text(content, "", 64f, 1452f, 424f, 120f, 80f, BeatNetColor.Text, BeatNetFont.Rank);
+        rank = ui.Text(content, "", 46f, 1270f, 424f, 84f, 80f, BeatNetColor.Text, BeatNetFont.Rank);
         rank.richText = true;
         rank.alignment = TextAlignmentOptions.BottomLeft;
         rank.rectTransform.localScale = new Vector3(1f, 0.9f, 1f);
         cleared = ui.Text(content, "", 80f * 13.64f / 48.1f, 1140f, 424f, 192f, 36f, BeatNetColor.Text);
-        cleared.richText = true;
+        cleared.richText = false;
+        cleared.characterSpacing = 11f;
         cleared.alignment = TextAlignmentOptions.BottomRight;
         cleared.overflowMode = TextOverflowModes.Overflow;
         ui.Fill(content, "Divider", BeatNetColor.Line, TextLeft, 514f, TextWidth, 1f);
@@ -402,7 +410,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         preview.onClick.AddListener(TogglePreview);
         controls.Add(preview);
         controls.Add(close);
-        status = ui.Text(content, "", 15f, 40f, 286f, 680f, 30f, BeatNetColor.Muted);
+        status = ui.Text(content, "", 15f, 40f, 906f, ListWidth, 24f, BeatNetColor.Muted);
         foreach (var text in new[] { title, artist, mapper, highscore, rank, cleared, sizeLabel, countLabel, pageLabel, empty }.Concat(difficultyNames).Concat(difficultyLevels))
         {
             textFades[text] = BeatNetFade.Create(text.gameObject);
@@ -410,8 +418,27 @@ public sealed class BeatNetPanel : MonoBehaviour
         BuildLoading();
         rhythm = new BeatNetRhythm(ui, window, content);
         BuildDifficultyPopup();
-        keyboard = new BeatNetKeyboard(ui, window, search, events, Search,
+        ratings = new BeatNetRatings(ui, content);
+        ratings.Saved = UpdateRating;
+        exploreScores = new BeatNetExploreScores(async (entry, modifiers, token) =>
+        {
+            var accounts = Plugin.Accounts ?? throw new InvalidOperationException("BEATNET is not ready");
+            var result = await accounts.Request(new JObject { ["action"] = "highscores", ["projectId"] = entry.Id,
+                ["revisionId"] = entry.Revision.Id, ["modifiers"] = modifiers }, token).ConfigureAwait(false);
+            return result.ToObject<GlobalScores>() ?? throw new InvalidDataException("The server returned empty global highscores");
+        });
+        filters = new BeatNetFilters(ui, transform, content, events, () =>
+        {
+            focusId = library ? selected?.Id ?? ArcadeSelection.LibrarySong : string.Empty;
+            LoadPage(0);
+        });
+        controls.Insert(4, filters.Sort);
+        controls.Insert(5, filters.Difficulty);
+        controls.Add(ratings.Slider);
+        keyboard = new BeatNetKeyboard(ui, transform, search, events, Search,
             () => events.SetSelectedGameObject(controls[1].gameObject));
+        accountPanel = new BeatNetAccountPanel(ui, transform, window, events);
+        controls.Add(accountPanel.Manage);
         RefreshControls();
     }
 
@@ -646,6 +673,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         }
         controller = active;
         ui.SetController(active);
+        filters.SetController(active);
         if (prepared && !active && difficultyPopup.activeSelf)
         {
             events.SetSelectedGameObject(null);
@@ -680,6 +708,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         closing = false;
         tabs.Reset();
         library = ArcadeSelection.Library;
+        if (library && focusId.Length == 0) { focusId = ArcadeSelection.LibrarySong; }
         KeepCursor = false;
         backgroundPerspective?.Set(0.25f, 3f);
         windowPerspective.Set(1.4f);
@@ -711,6 +740,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         try
         {
             latest.Clear();
+            ReadRevisions();
             LoadPage(0);
         }
         catch (Exception error)
@@ -723,6 +753,26 @@ public sealed class BeatNetPanel : MonoBehaviour
             openingUntil = Time.unscaledTime + 1f;
             CustomSongLoader.Logger?.LogInfo($"beatnet opening input {inputTime} ms visibility {visibilityTime - inputTime} ms sound {soundTime - visibilityTime} ms page {watch.ElapsedMilliseconds - soundTime} ms");
         }
+    }
+
+    internal bool ShowLibrary(string id)
+    {
+        if (closing || IsOpen && installing) { return false; }
+        if (IsOpen && library && focusId == id) { return true; }
+        focusId = id;
+        query = string.Empty;
+        search.SetTextWithoutNotify(string.Empty);
+        ArcadeSelection.SaveLibrary(true);
+        if (IsOpen)
+        {
+            keyboard.Hide();
+            accountPanel.Hide();
+            tabs.Reset();
+            library = true;
+            LoadPage(0);
+        }
+        else { Show(); }
+        return IsOpen;
     }
 
     internal void Close(bool immediate = false, Action? finished = null)
@@ -744,9 +794,10 @@ public sealed class BeatNetPanel : MonoBehaviour
         tabs.Reset();
         KeepCursor = !controller;
         keyboard.Hide();
+        accountPanel.Hide();
+        filters.Hide();
         difficultyPopup.SetActive(false);
         cancellation?.Cancel();
-        updateCancellation?.Cancel();
         search.DeactivateInputField();
         events.SetSelectedGameObject(null);
         motion.Hide(immediate, finished);
@@ -814,6 +865,8 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     internal void Back()
     {
+        if (filters.IsOpen) { filters.Close(); return; }
+        if (accountPanel.IsOpen) { accountPanel.Close(); return; }
         if (keyboard.IsOpen)
         {
             keyboard.Close();
@@ -849,6 +902,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         tabs.Switch(value, () =>
         {
             library = value;
+            focusId = value ? ArcadeSelection.LibrarySong : string.Empty;
             query = search.text.Trim();
             LoadPage(0);
         });
@@ -882,6 +936,8 @@ public sealed class BeatNetPanel : MonoBehaviour
         detailFrames.Clear();
         drawingPage = drawingDetails = false;
         difficultyPopup.SetActive(false);
+        filters.Hide();
+        ratings.Show(null, library);
         audioPreview.Stop();
         CancelWork();
         loadingPage = true;
@@ -914,8 +970,12 @@ public sealed class BeatNetPanel : MonoBehaviour
         RefreshControls();
         var local = library;
         var filter = query;
+        var sorting = filters.Sorting;
+        var difficulties = filters.Difficulties.ToArray();
+        var cachedRatings = libraryEntries.ToDictionary(item => item.Id, item => (item.Rating, item.RatingCount));
+        var focused = focusId;
         var source = client;
-        var cachedPage = !local && filter.Length == 0 && offset == 0 ? firstPage : null;
+        var cachedPage = !local && filter.Length == 0 && offset == 0 && sorting == "title" && difficulties.Length == 0 ? firstPage : null;
         if (cachedPage != null)
         {
             firstPage = null;
@@ -927,12 +987,9 @@ public sealed class BeatNetPanel : MonoBehaviour
         Run(async token =>
         {
             var scan = Task.Run(() => installer.Library(), token);
-            if (!local)
-            {
-                source = await clientReady.ConfigureAwait(false);
-                token.ThrowIfCancellationRequested();
-            }
-            var remote = local ? null : cachedPage ?? source!.List(filter, offset, PageSize, token);
+            source = await clientReady.ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            var remote = local ? null : cachedPage ?? source!.List(filter, offset, PageSize, token, sorting, difficulties);
             if (remote != null)
             {
                 await Task.WhenAll(scan, remote).ConfigureAwait(false);
@@ -942,12 +999,24 @@ public sealed class BeatNetPanel : MonoBehaviour
             CatalogPage result;
             if (local)
             {
-                var matches = entries.Where(item => filter.Length == 0
-                    || item.Title.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0
-                    || item.Artist.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0
-                    || item.Creator.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
-                var start = matches.Length == 0 ? 0 : Math.Min(offset, (matches.Length - 1) / PageSize * PageSize);
-                result = new CatalogPage { Items = matches.Skip(start).Take(PageSize).ToArray(), Total = matches.Length, Offset = start, Limit = PageSize };
+                foreach (var entry in entries)
+                {
+                    if (cachedRatings.TryGetValue(entry.Id, out var rating)) { entry.Rating = rating.Rating; entry.RatingCount = rating.RatingCount; }
+                }
+                using var ratingTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                ratingTimeout.CancelAfter(TimeSpan.FromSeconds(8));
+                try
+                {
+                    var summaries = await source!.Ratings(entries.Where(item => BeatNetClient.IsId(item.Id)).Select(item => item.Id).ToArray(), ratingTimeout.Token).ConfigureAwait(false);
+                    var lookup = summaries.ToDictionary(item => item.Id);
+                    foreach (var entry in entries)
+                    {
+                        if (lookup.TryGetValue(entry.Id, out var rating)) { entry.Rating = rating.Average; entry.RatingCount = rating.Count; }
+                    }
+                }
+                catch (Exception) when (!token.IsCancellationRequested) { }
+                token.ThrowIfCancellationRequested();
+                result = BeatNetCatalog.LibraryPage(entries, filter, sorting, difficulties, offset, PageSize, focused);
             }
             else
             {
@@ -962,7 +1031,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             }
             client = source;
             libraryEntries = loaded.Entries;
-            CheckUpdates();
+            if (library && !libraryEntries.Any(item => item.Id == ArcadeSelection.LibrarySong)) { ArcadeSelection.SaveLibrarySong(string.Empty); }
             var result = loaded.Page;
             if (result.Items.Length == 0 && result.Total > 0 && offset > 0)
             {
@@ -971,7 +1040,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             }
             foreach (var entry in result.Items)
             {
-                if (latest.TryGetValue(entry.Id, out var cached) && cached.Revision.Id != entry.Revision.Id)
+                if (!library && latest.TryGetValue(entry.Id, out var cached) && cached.Revision.Number < entry.Revision.Number)
                 {
                     latest.Remove(entry.Id);
                 }
@@ -1012,11 +1081,15 @@ public sealed class BeatNetPanel : MonoBehaviour
             HideLoading();
             if (page.Items.Length > 0)
             {
+                var index = Array.FindIndex(page.Items, item => item.Id == focusId);
+                if (index < 0) { index = 0; }
+                focusId = string.Empty;
                 if (controller && !IsTyping && !tabs.IsMoving)
                 {
-                    events.SetSelectedGameObject(rows[0].gameObject);
+                    events.SetSelectedGameObject(rows[index].gameObject);
                 }
-                SelectRow(0);
+                SelectRow(index);
+                RevealRow(index);
             }
             RefreshControls();
         });
@@ -1040,9 +1113,10 @@ public sealed class BeatNetPanel : MonoBehaviour
         {
             return false;
         }
-        var revision = libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.Revision.Id;
+        var installed = libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id);
+        if (installed != null && Plugin.Accounts?.HasUpdate(beatmap.Id) == true) { return true; }
         var remote = latest.TryGetValue(beatmap.Id, out var entry) ? entry : library ? null : beatmap;
-        return revision != null && remote != null && revision != remote.Revision.Id;
+        return installed != null && remote != null && installed.Revision.Number < remote.Revision.Number;
     }
 
     private void SetRowLabel(int index)
@@ -1077,6 +1151,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             BeatNetSounds.Play(BeatNetSound.Confirm);
         }
         var beatmap = page.Items[index];
+        if (library) { ArcadeSelection.SaveLibrarySong(beatmap.Id); }
         audioPreview.Stop();
         difficultyPopup.SetActive(false);
         var previousIndex = selectedIndex;
@@ -1099,6 +1174,8 @@ public sealed class BeatNetPanel : MonoBehaviour
         if (library || latest.ContainsKey(beatmap.Id))
         {
             selected = latest.TryGetValue(beatmap.Id, out var cached) ? cached : beatmap;
+            selected.Rating = beatmap.Rating;
+            selected.RatingCount = beatmap.RatingCount;
             ShowDetails(selected);
             RefreshControls();
             return;
@@ -1130,6 +1207,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void ShowDetails(BeatmapEntry beatmap)
     {
+        ratings.Show(beatmap, library);
         if (detailCover.texture != null)
         {
             detailCover.texture = null;
@@ -1203,104 +1281,36 @@ public sealed class BeatNetPanel : MonoBehaviour
         mapper.rectTransform.anchoredPosition = new Vector2(TextLeft, mapperTop);
     }
 
-    private void CheckUpdates()
+    private void ReadRevisions()
     {
-        if (client == null || updateCheck != null && !updateCheck.IsCompleted && updateCancellation?.IsCancellationRequested != true)
+        var downloads = Plugin.Downloads;
+        if (downloads == null) { return; }
+        foreach (var entry in downloads.Latest)
         {
-            return;
-        }
-        if (updateCheck != null)
-        {
-            _ = updateCheck.ContinueWith(task => { _ = task.Exception; }, CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        }
-        updateCancellation?.Dispose();
-        updateCancellation = new CancellationTokenSource();
-        updateFailed = false;
-        var entries = libraryEntries.Where(item => BeatNetClient.IsId(item.Id)).ToArray();
-        var token = updateCancellation.Token;
-        var source = client;
-        updateCheck = Task.Run(async () =>
-        {
-            var results = new Dictionary<string, BeatmapEntry>();
-            var failed = false;
-            using var slots = new SemaphoreSlim(4);
-            var requests = entries.Select(async local =>
+            if (!latest.TryGetValue(entry.Key, out var cached) || cached.Revision.Number <= entry.Value.Revision.Number)
             {
-                await slots.WaitAsync(token).ConfigureAwait(false);
-                try
-                {
-                    var remote = await source.Get(local.Id, token).ConfigureAwait(false);
-                    remote.LocalPath = local.LocalPath;
-                    remote.InstalledSize = local.InstalledSize;
-                    lock (results)
-                    {
-                        results[remote.Id] = remote;
-                    }
-                }
-                catch (Exception error) when (error is HttpRequestException || error is InvalidDataException || error is OperationCanceledException)
-                {
-                    token.ThrowIfCancellationRequested();
-                    lock (results)
-                    {
-                        failed = true;
-                    }
-                }
-                finally
-                {
-                    slots.Release();
-                }
-            });
-            await Task.WhenAll(requests).ConfigureAwait(false);
-            return (results, failed);
-        }, token);
+                latest[entry.Key] = entry.Value;
+            }
+        }
     }
 
-    private void PollUpdates()
+    private void PollRevisions()
     {
-        if (updateCheck == null || !updateCheck.IsCompleted)
+        var version = Plugin.Accounts?.RevisionVersion ?? 0;
+        var metadata = Plugin.Downloads?.RevisionVersion ?? 0;
+        if (revisionVersion == version && metadataVersion == metadata) { return; }
+        revisionVersion = version;
+        metadataVersion = metadata;
+        ReadRevisions();
+        for (var index = 0; index < page.Items.Length; index++) { rowStates[index].text = RowState(page.Items[index]); }
+        if (selected != null && HasUpdate(selected))
         {
-            return;
-        }
-        var task = updateCheck;
-        updateCheck = null;
-        try
-        {
-            var result = task.GetAwaiter().GetResult();
-            updateFailed = result.Failed;
-            foreach (var entry in result.Entries)
+            difficultyPopup.SetActive(false);
+            if (latest.TryGetValue(selected.Id, out var remote))
             {
-                if (!latest.TryGetValue(entry.Key, out var cached) || cached.Revision.Number <= entry.Value.Revision.Number)
-                {
-                    latest[entry.Key] = entry.Value;
-                }
+                selected = remote;
+                ShowDetails(selected);
             }
-            if (IsOpen)
-            {
-                for (var index = 0; index < page.Items.Length; index++)
-                {
-                    var state = RowState(page.Items[index]);
-                    if (rowStates[index].text != state)
-                    {
-                        var row = index;
-                        pageFrames.Add(() => rowStates[row].text = state);
-                    }
-                }
-                if (library && selected != null && latest.TryGetValue(selected.Id, out var remote))
-                {
-                    selected = remote;
-                    ShowDetails(selected);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            sizeLoading.Hide();
-            supportedLoading.Hide();
-        }
-        catch (Exception)
-        {
-            updateFailed = true;
         }
         RefreshControls();
     }
@@ -1366,6 +1376,8 @@ public sealed class BeatNetPanel : MonoBehaviour
                 reloadNeeded = false;
             }
             libraryEntries = entries;
+            focusId = page.Items.Skip(selectedIndex + 1).Concat(page.Items.Take(selectedIndex).Reverse()).FirstOrDefault(item => item.Id != beatmap.Id)?.Id ?? string.Empty;
+            ArcadeSelection.SaveLibrarySong(focusId);
             if (IsOpen)
             {
                 LoadPage(page.Offset);
@@ -1507,6 +1519,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             control.interactable = !installing;
         }
         controls[controls.Count - 1].interactable = true;
+        filters.Sort.interactable = filters.Difficulty.interactable = !installing && !drawingPage && pending == null;
         foreach (var row in rows)
         {
             row.interactable = !installing && !drawingPage;
@@ -1553,10 +1566,65 @@ public sealed class BeatNetPanel : MonoBehaviour
         difficulty.interactable = choices.Length > 0 && !drawingDetails && !installing && pending == null;
         var currentSong = choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == playDifficulty);
         difficulty.GetComponentInChildren<TextMeshProUGUI>(true).text = currentSong == null ? "No playable difficulty" : currentSong.Beatmap.metadata.GetDifficulty(playDifficulty);
-        highscore.gameObject.SetActive(currentSong != null);
-        rank.gameObject.SetActive(currentSong != null);
-        cleared.gameObject.SetActive(currentSong != null);
-        var path = currentSong?.Path ?? string.Empty;
+        if (library)
+        {
+            SetScoreVisible(currentSong != null);
+            if (currentSong != null)
+            {
+                var scores = FileStorage.highscores?.GetAllScores(currentSong.Path) ?? currentSong.Highscore;
+                scores.TryGetValue(HighScoreList.GetModifiersLeaderboard(StorableBeatmapOptions.GetModifierMask()), out var record);
+                var state = record?.cleared == true ? BeatNetScoreText.ClearState(true, record.IsFullCombo(), record.IsPerfectFullCombo()) : string.Empty;
+                ShowScore(record?.score ?? 0, record?.accuracy ?? 0f, record != null && record.score > 0 && record.IsNoMiss(), record?.cleared == true, state, currentSong.Path);
+            }
+        }
+        RefreshExploreScore();
+        preview.gameObject.SetActive(!library);
+        preview.interactable = !library && selected?.Preview != null && !drawingDetails && !installing && pending == null && client != null;
+        play.interactable = installed && !update && !drawingDetails && !installing && pending == null && choices.Length > 0
+            && downloads?.Contains(selected!.Id) != true;
+        supported.gameObject.SetActive(true);
+        supportedHeading.gameObject.SetActive(true);
+        difficulty.GetComponent<RectTransform>().anchoredPosition = new Vector2(TextLeft, -696f);
+        difficulty.GetComponent<RectTransform>().sizeDelta = new Vector2(TextWidth, 48f);
+        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).rectTransform.sizeDelta = new Vector2(TextWidth - 32f, 48f);
+        updateLabel.text = update ? "Update available" : string.Empty;
+        updateLabel.rectTransform.anchoredPosition = new Vector2(TextLeft, -878f);
+        updateLabel.rectTransform.sizeDelta = new Vector2(TextWidth, 22f);
+        updateLabel.alignment = TextAlignmentOptions.Right;
+        ratings.Refresh(library, installing || drawingPage || drawingDetails || pending != null);
+        var focused = events.currentSelectedGameObject?.GetComponent<Selectable>();
+        if (controller && !closing && !tabs.IsMoving && !difficultyPopup.activeSelf && !filters.IsOpen && !keyboard.IsOpen
+            && (focused == null || !focused.gameObject.activeInHierarchy || !focused.interactable || focused == exploreTab || focused == libraryTab))
+        {
+            var target = update && install.interactable ? install : play.gameObject.activeInHierarchy && play.interactable ? play
+                : selectedIndex >= 0 && rows[selectedIndex].interactable ? rows[selectedIndex] : close;
+            events.SetSelectedGameObject(target.gameObject);
+        }
+    }
+
+    private void UpdateRating(BeatmapEntry beatmap)
+    {
+        foreach (var entry in libraryEntries.Concat(page.Items).Concat(latest.Values).Where(item => item.Id == beatmap.Id))
+        {
+            entry.Rating = beatmap.Rating;
+            entry.RatingCount = beatmap.RatingCount;
+        }
+        if (library && filters.Sorting == "rating")
+        {
+            focusId = beatmap.Id;
+            LoadPage(page.Offset);
+        }
+    }
+
+    private void SetScoreVisible(bool active)
+    {
+        highscore.gameObject.SetActive(active);
+        rank.gameObject.SetActive(active);
+        cleared.gameObject.SetActive(active);
+    }
+
+    private void ShowScore(int score, float accuracy, bool noMiss, bool wasCleared, string label, string path)
+    {
         if (path != scorePath)
         {
             scorePath = path;
@@ -1564,38 +1632,29 @@ public sealed class BeatNetPanel : MonoBehaviour
             textFades[rank].Clear();
             textFades[cleared].Clear();
         }
-        if (currentSong != null)
+        FadeText(highscore, "<mspace=0.8em>" + score.ToString("0000000"));
+        FadeText(rank, score == 0 ? string.Empty : HighScoreScreen.GetLetterGradeArcade(accuracy, noMiss, wasCleared)
+            .Replace("++", "<voffset=0.30em>+<voffset=-0.30em><space=-0.85em>+"));
+        FadeText(cleared, label);
+        LayoutScore();
+    }
+
+    private void RefreshExploreScore()
+    {
+        var modifiers = HighScoreList.GetModifiersLeaderboard(StorableBeatmapOptions.GetModifierMask());
+        exploreScores.Tick(Time.unscaledTime, library || closing ? null : selected, modifiers);
+        if (library) { return; }
+        SetScoreVisible(selected != null && !closing);
+        if (selected != null && !closing)
         {
-            var scores = FileStorage.highscores?.GetAllScores(currentSong.Path) ?? currentSong.Highscore;
-            scores.TryGetValue(HighScoreList.GetModifiersLeaderboard(StorableBeatmapOptions.GetModifierMask()), out var record);
-            FadeText(highscore, "<mspace=0.8em>" + (record?.score ?? 0).ToString("0000000"));
-            FadeText(rank, record == null || record.score == 0 ? string.Empty
-                : HighScoreScreen.GetLetterGradeArcade(record.accuracy, record.IsNoMiss(), record.cleared)
-                    .Replace("++", "<voffset=0.30em>+<voffset=-0.30em><space=-0.85em>+"));
-            FadeText(cleared, record?.cleared == true ? "<cspace=0.11em>cleared." : string.Empty);
-            LayoutScore();
+            var record = exploreScores.Current;
+            ShowScore(record.Score, record.Accuracy, record.NoMiss, record.Cleared, exploreScores.Label,
+                "global:" + selected.Id + ":" + selected.Revision.Id + ":" + modifiers + ":" + record.Difficulty);
         }
-        preview.gameObject.SetActive(!library);
-        preview.interactable = !library && selected?.Preview != null && !drawingDetails && !installing && pending == null && client != null;
-        play.interactable = installed && !update && !drawingDetails && !installing && pending == null && choices.Length > 0
-            && (!BeatNetClient.IsId(selected?.Id) || updateCheck == null) && downloads?.Contains(selected!.Id) != true;
-        supported.gameObject.SetActive(true);
-        supportedHeading.gameObject.SetActive(true);
-        difficulty.GetComponent<RectTransform>().anchoredPosition = new Vector2(TextLeft, -696f);
-        difficulty.GetComponent<RectTransform>().sizeDelta = new Vector2(TextWidth, 48f);
-        difficulty.GetComponentInChildren<TextMeshProUGUI>(true).rectTransform.sizeDelta = new Vector2(TextWidth - 32f, 48f);
-        updateLabel.text = update ? "Update available" : library && updateCheck != null ? "Checking updates"
-            : library && updateFailed ? "Update check unavailable" : string.Empty;
-        updateLabel.rectTransform.anchoredPosition = new Vector2(TextLeft + 278f, -646f);
-        updateLabel.rectTransform.sizeDelta = new Vector2(352f, 30f);
-        updateLabel.alignment = TextAlignmentOptions.Right;
-        var focused = events.currentSelectedGameObject?.GetComponent<Selectable>();
-        if (controller && !closing && !tabs.IsMoving && !difficultyPopup.activeSelf && !keyboard.IsOpen
-            && (focused == null || !focused.gameObject.activeInHierarchy || !focused.interactable || focused == exploreTab || focused == libraryTab))
+        if (exploreScoreError != exploreScores.Error)
         {
-            var target = update && install.interactable ? install : play.gameObject.activeInHierarchy && play.interactable ? play
-                : selectedIndex >= 0 && rows[selectedIndex].interactable ? rows[selectedIndex] : close;
-            events.SetSelectedGameObject(target.gameObject);
+            if (status.text == exploreScoreError || exploreScores.Error.Length > 0) { status.text = exploreScores.Error; }
+            exploreScoreError = exploreScores.Error;
         }
     }
 
@@ -1769,13 +1828,21 @@ public sealed class BeatNetPanel : MonoBehaviour
             }
         }
         backgroundPerspective?.Tick();
-        windowPerspective.Set(difficultyPopup.activeSelf ? 0.8f : 1.4f);
+        windowPerspective.Set(difficultyPopup.activeSelf || accountPanel.IsOpen || filters.IsOpen ? 0.8f : 1.4f);
         windowPerspective.Tick();
         difficultyPerspective.Tick();
         ui.RefreshTheme();
+        accountPanel.Tick();
+        filters.Tick();
+        ratings.Tick();
+        if (ratingError != ratings.Error)
+        {
+            if (status.text == ratingError || ratings.Error.Length > 0) { status.text = ratings.Error; }
+            ratingError = ratings.Error;
+        }
         rhythm.Tick();
         PollWork();
-        PollUpdates();
+        PollRevisions();
         PollDownloads();
         UpdateCovers();
         try
@@ -1808,6 +1875,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             RefreshControls();
         }
         audioPreview.Tick();
+        RefreshExploreScore();
         preview.GetComponentInChildren<TextMeshProUGUI>(true).text = audioPreview.IsLoading ? "Cancel preview" : audioPreview.IsActive ? "Stop preview" : "Preview";
         if (audioPreview.Error.Length > 0)
         {
@@ -1850,7 +1918,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         Cursor.visible = !controller || IsTyping;
         GetComponent<GraphicRaycaster>().enabled = true;
         if (!controller && fade.interactable && (!difficultyPopup.activeSelf || difficultyMotion.IsReady)
-            && (!keyboard.IsOpen || keyboard.IsReady))
+            && (!keyboard.IsOpen || keyboard.IsReady) && (!accountPanel.IsOpen || accountPanel.IsReady))
         {
             pointerModule.ProcessPointer();
         }
@@ -1859,6 +1927,7 @@ public sealed class BeatNetPanel : MonoBehaviour
     internal void HandleNavigation()
     {
         if (closing || tabs.IsMoving || !fade.interactable || difficultyPopup.activeSelf && !difficultyMotion.IsReady
+            || filters.IsOpen && !filters.IsReady
             || keyboard.IsOpen && !keyboard.IsReady || !Application.isFocused || Time.frameCount == shownFrame)
         {
             return;
@@ -1909,7 +1978,7 @@ public sealed class BeatNetPanel : MonoBehaviour
                         : new Vector2Int(0, movement.y > 0f ? 1 : -1);
                     controllerMove = true;
                 }
-                if (scrolling && !IsTyping && !difficultyPopup.activeSelf)
+                if (scrolling && !IsTyping && !difficultyPopup.activeSelf && !filters.IsOpen)
                 {
                     list.OnScroll(new PointerEventData(events)
                     {
@@ -1917,17 +1986,36 @@ public sealed class BeatNetPanel : MonoBehaviour
                     });
                 }
                 submit |= pad.a.justPressed;
-                if (pad.leftBumper.justPressed && !difficultyPopup.activeSelf && !IsTyping)
+                if (pad.leftBumper.justPressed && !difficultyPopup.activeSelf && !filters.IsOpen && !IsTyping)
                 {
                     SetLibrary(false);
                 }
-                if (pad.rightBumper.justPressed && !difficultyPopup.activeSelf && !IsTyping)
+                if (pad.rightBumper.justPressed && !difficultyPopup.activeSelf && !filters.IsOpen && !IsTyping)
                 {
                     SetLibrary(true);
                 }
             }
         }
         var tab = UnityEngine.Input.GetKeyDown(KeyCode.Tab);
+        if (accountPanel.IsOpen)
+        {
+            if (!accountPanel.IsReady) { return; }
+            if (tab) { accountPanel.Navigate(Vector2Int.zero, UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift) ? -1 : 1); }
+            if (!accountPanel.IsTyping && !controllerMove)
+            {
+                direction = new Vector2Int(UnityEngine.Input.GetKey(KeyCode.RightArrow) ? 1 : UnityEngine.Input.GetKey(KeyCode.LeftArrow) ? -1 : 0,
+                    UnityEngine.Input.GetKey(KeyCode.UpArrow) ? 1 : UnityEngine.Input.GetKey(KeyCode.DownArrow) ? -1 : 0);
+            }
+            var popupMove = direction.x + direction.y * 2;
+            if (popupMove != 0 && (popupMove != lastDirection || Time.unscaledTime >= nextMove))
+            {
+                accountPanel.Navigate(direction, 0, controllerMove);
+                nextMove = Time.unscaledTime + (popupMove == lastDirection ? 0.12f : 0.35f);
+            }
+            lastDirection = popupMove;
+            if (submit || UnityEngine.Input.GetKeyDown(KeyCode.Return) || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter)) { accountPanel.Activate(controller); }
+            return;
+        }
         if (search.isFocused && !keyboard.IsOpen)
         {
             if (submit)
@@ -1971,6 +2059,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             Navigate(Vector2Int.zero, backwards ? -1 : 1);
         }
         var move = direction.x + direction.y * 2;
+        if (move == 0 && lastDirection != 0 && events.currentSelectedGameObject == ratings.Slider.gameObject) { ratings.Commit(); }
         if (move != 0 && (move != lastDirection || Time.unscaledTime >= nextMove))
         {
             Navigate(direction);
@@ -1989,6 +2078,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             {
                 button.OnSubmit(new BaseEventData(events));
             }
+            else if (control == ratings.Slider) { ratings.Commit(); }
             else if (control == search)
             {
                 if (controller)
@@ -2038,6 +2128,12 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void Navigate(Vector2Int direction, int step = 0)
     {
+        if (filters.IsOpen) { filters.Navigate(direction, step); return; }
+        if (step == 0 && direction.x != 0 && events.currentSelectedGameObject == ratings.Slider.gameObject)
+        {
+            ratings.Adjust(direction.x);
+            return;
+        }
         if (keyboard.IsOpen)
         {
             keyboard.Navigate(direction, step);
@@ -2137,6 +2233,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         detailFrames.Clear();
         drawingPage = drawingDetails = false;
         visible = false;
+        exploreScores?.Dispose();
         closing = false;
         closeFrame = Time.frameCount;
         if (inputOwner != null)
@@ -2144,9 +2241,10 @@ public sealed class BeatNetPanel : MonoBehaviour
             RestorePerspective();
             audioPreview.Stop();
             keyboard.Hide();
+            accountPanel.Hide();
+            filters.Hide();
             difficultyPopup.SetActive(false);
             cancellation?.Cancel();
-            updateCancellation?.Cancel();
             search.DeactivateInputField();
             RestoreCursor();
         }
@@ -2154,12 +2252,11 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void OnDestroy()
     {
+        exploreScores?.Dispose();
         covers?.Dispose();
         firstCancellation.Cancel();
         firstCancellation.Dispose();
         CancelWork();
-        updateCancellation?.Cancel();
-        updateCancellation?.Dispose();
         RestoreInput(true);
         if (clientReady != null)
         {

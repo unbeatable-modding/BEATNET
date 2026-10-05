@@ -19,6 +19,8 @@ internal sealed class BeatmapEntry
     public string Artist { get; set; } = string.Empty;
     public string Creator { get; set; } = string.Empty;
     public string Submitter { get; set; } = string.Empty;
+    public double Rating { get; set; }
+    public int RatingCount { get; set; }
     public BeatmapRevision Revision { get; set; } = new();
     public BeatmapFile[] Files { get; set; } = Array.Empty<BeatmapFile>();
     public string[] Difficulties { get; set; } = Array.Empty<string>();
@@ -34,6 +36,33 @@ internal sealed class BeatmapEntry
     public string LocalPath { get; set; } = string.Empty;
     [JsonIgnore]
     public long InstalledSize { get; set; }
+}
+
+internal sealed class RatingBatch
+{
+    public RatingSummary[] Items { get; set; } = Array.Empty<RatingSummary>();
+}
+
+internal sealed class RatingSummary
+{
+    public string Id { get; set; } = string.Empty;
+    public double Average { get; set; }
+    public int Count { get; set; }
+}
+
+internal sealed class GlobalScores
+{
+    public string RevisionId { get; set; } = string.Empty;
+    public GlobalScore[] Items { get; set; } = Array.Empty<GlobalScore>();
+}
+
+internal sealed class GlobalScore
+{
+    public string Difficulty { get; set; } = string.Empty;
+    public int Score { get; set; }
+    public float Accuracy { get; set; }
+    public bool NoMiss { get; set; }
+    public bool Cleared { get; set; }
 }
 
 internal sealed class BeatmapPreview

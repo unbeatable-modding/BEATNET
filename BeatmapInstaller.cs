@@ -459,7 +459,7 @@ internal sealed class BeatmapInstaller
         }
     }
 
-    private static void CheckParents(string path)
+    internal static void CheckParents(string path)
     {
         for (var directory = new DirectoryInfo(path); directory != null; directory = directory.Parent)
         {

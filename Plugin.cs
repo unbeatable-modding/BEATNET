@@ -3,6 +3,7 @@ using Arcade.UI.MenuStates;
 using Arcade.UI.SongSelect;
 using BepInEx;
 using HarmonyLib;
+using Rhythm;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -18,11 +19,13 @@ public sealed class Plugin : BaseUnityPlugin
     private float nextScan;
     private Harmony? patches;
     internal static BeatNetDownloads? Downloads { get; private set; }
+    internal static BeatNetAccounts? Accounts { get; private set; }
 
     private void Awake()
     {
         CustomSongLoader.Logger = Logger;
         Downloads = new BeatNetDownloads(Application.persistentDataPath);
+        Accounts = new BeatNetAccounts(Application.persistentDataPath);
         var settings = ArcadeSelection.OpenConfig(Paths.ConfigPath);
         ArcadeSelection.Initialize(settings, Logger);
         settings.Save();
@@ -34,6 +37,7 @@ public sealed class Plugin : BaseUnityPlugin
     private void Update()
     {
         Downloads?.Tick();
+        Accounts?.Tick();
         if (Downloads?.NeedsReload == true
             && ArcadeMenuStateMachine.Instance?.CurrentState?.StateName == EArcadeMenuStates.SongSelect)
         {
@@ -47,6 +51,7 @@ public sealed class Plugin : BaseUnityPlugin
         if (openButton != null)
         {
             openButton.HandleInput();
+            BeatNetUpdateMenu.Tick(openButton);
             return;
         }
 
@@ -87,6 +92,9 @@ public sealed class Plugin : BaseUnityPlugin
     private void OnDestroy()
     {
         Downloads?.Dispose();
+        Accounts?.Dispose();
+        Accounts = null;
+        BeatNetUpdateMenu.Clear();
         Downloads = null;
         ArcadeSelection.Save();
         patches?.UnpatchSelf();
@@ -100,6 +108,62 @@ public sealed class Plugin : BaseUnityPlugin
     private void OnApplicationQuit()
     {
         ArcadeSelection.Save();
+    }
+
+    private static void SetPlaying(bool value)
+    {
+        Accounts?.SetPlaying(value);
+        Downloads?.SetPlaying(value);
+    }
+
+    [HarmonyPatch(typeof(Rhythm.RhythmController), "Awake")]
+    private static class GameplayPatch
+    {
+        private static void Prefix() => SetPlaying(true);
+    }
+
+    [HarmonyPatch(typeof(Rhythm.RhythmController), nameof(Rhythm.RhythmController.InitializeAndPlay))]
+    private static class StartGameplayPatch
+    {
+        private static void Prefix() => SetPlaying(true);
+    }
+
+    private static bool Retry(ArcadeProgression progression)
+    {
+        var path = progression.GetBeatmapPath();
+        if (!BeatNetPlay.CanPlay(path)) { progression.Back(); return false; }
+        Accounts?.BeginRun(path);
+        return true;
+    }
+
+    [HarmonyPatch(typeof(ArcadeProgression), nameof(ArcadeProgression.Retry))]
+    private static class RetryPatch
+    {
+        private static bool Prefix(ArcadeProgression __instance) => Retry(__instance);
+    }
+
+    [HarmonyPatch(typeof(Rhythm.RhythmController), nameof(Rhythm.RhythmController.RestartBeatmap))]
+    private static class RestartPatch
+    {
+        private static bool Prefix() => JeffBezosController.rhythmProgression is not ArcadeProgression progression || Retry(progression);
+    }
+
+    [HarmonyPatch(typeof(Rhythm.RhythmController), "OnDestroy")]
+    private static class ExitGameplayPatch
+    {
+        private static void Postfix() => SetPlaying(false);
+    }
+
+    [HarmonyPatch(typeof(HighScoreScreenArcade), "Awake")]
+    private static class ResultsPatch
+    {
+        private static void Prefix() => SetPlaying(false);
+    }
+
+    [HarmonyPatch(typeof(ArcadeMenuStateMachine), "Awake")]
+    private static class MenuPatch
+    {
+        private static void Postfix() => SetPlaying(false);
     }
 
     [HarmonyPatch(typeof(ArcadeSongListView), "Update")]
