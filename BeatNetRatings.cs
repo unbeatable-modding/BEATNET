@@ -107,7 +107,7 @@ internal sealed class BeatNetRatings
     private void DrawAverage()
     {
         var online = entry != null && BeatNetClient.IsId(entry.Id);
-        average.text = entry == null ? string.Empty : online ? (entry.Rating * 10).ToString("0.00", CultureInfo.GetCultureInfo("de-DE")) + "%" : "-";
+        average.text = entry == null ? string.Empty : online ? (entry.Rating * 10).ToString("0.00", CultureInfo.CurrentCulture) + "%" : "-";
         verdict.text = entry == null ? string.Empty : !online ? "Not on BEATNET" : entry.RatingCount == 0 ? "Unrated" : BeatNetRatingText.Describe(entry.Rating * 10);
     }
 
