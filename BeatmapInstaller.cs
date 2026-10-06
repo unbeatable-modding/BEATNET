@@ -64,7 +64,7 @@ internal sealed class BeatmapInstaller
             return null;
         }
         var folder = Path.GetFullPath(beatmap.LocalPath);
-        var prefix = customSongs + Path.DirectorySeparatorChar;
+        var prefix = songs + Path.DirectorySeparatorChar;
         if (!folder.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(folder)
             || beatmap.Id != "local:" + Path.GetRelativePath(customSongs, folder))
         {
@@ -77,42 +77,38 @@ internal sealed class BeatmapInstaller
     internal List<BeatmapEntry> Library()
     {
         var result = new List<BeatmapEntry>();
-        if (!Directory.Exists(customSongs))
+        if (!Directory.Exists(songs))
         {
             return result;
         }
-        CheckParents(customSongs);
+        CheckParents(songs);
         var managed = new List<string>();
-        if (Directory.Exists(songs))
+        foreach (var folder in Directory.EnumerateDirectories(songs))
         {
-            CheckParents(songs);
-            foreach (var folder in Directory.EnumerateDirectories(songs))
+            try
             {
-                try
+                var id = Path.GetFileName(folder);
+                if (InstalledRevision(id) == null)
                 {
-                    var id = Path.GetFileName(folder);
-                    if (InstalledRevision(id) == null)
-                    {
-                        continue;
-                    }
-                    var record = JsonConvert.DeserializeObject<InstalledBeatmap>(File.ReadAllText(Path.Combine(folder, RecordName)))!;
-                    var entry = new BeatmapEntry
-                    {
-                        Id = id, Title = record.Title, Artist = record.Artist, Creator = record.Creator,
-                        Revision = new BeatmapRevision { Id = record.RevisionId, Number = record.RevisionNumber },
-                        LocalPath = folder, InstalledSize = record.Size,
-                    };
-                    ReadMetadata(entry, folder, true);
-                    result.Add(entry);
-                    managed.Add(folder);
+                    continue;
                 }
-                catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException || error is JsonException)
+                var record = JsonConvert.DeserializeObject<InstalledBeatmap>(File.ReadAllText(Path.Combine(folder, RecordName)))!;
+                var entry = new BeatmapEntry
                 {
-                    CustomSongLoader.Logger?.LogWarning($"skipped library map {Path.GetFileName(folder)} / {error.Message}");
-                }
+                    Id = id, Title = record.Title, Artist = record.Artist, Creator = record.Creator,
+                    Revision = new BeatmapRevision { Id = record.RevisionId, Number = record.RevisionNumber },
+                    LocalPath = folder, InstalledSize = record.Size,
+                };
+                ReadMetadata(entry, folder);
+                result.Add(entry);
+                managed.Add(folder);
+            }
+            catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException || error is JsonException)
+            {
+                CustomSongLoader.Logger?.LogWarning($"skipped library map {Path.GetFileName(folder)} / {error.Message}");
             }
         }
-        foreach (var folder in ChartFiles.GetCustomFolders(customSongs))
+        foreach (var folder in new[] { songs }.Concat(ChartFiles.GetSongFolders(songs)))
         {
             if (managed.Any(root => folder.Equals(root, StringComparison.OrdinalIgnoreCase)
                 || folder.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
@@ -126,8 +122,7 @@ internal sealed class BeatmapInstaller
                     continue;
                 }
                 var entry = new BeatmapEntry { Id = "local:" + Path.GetRelativePath(customSongs, folder), LocalPath = folder };
-                ReadMetadata(entry, folder, folder.Equals(songs, StringComparison.OrdinalIgnoreCase)
-                    || folder.StartsWith(songs + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                ReadMetadata(entry, folder);
                 result.Add(entry);
             }
             catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException)
@@ -138,11 +133,11 @@ internal sealed class BeatmapInstaller
         return result.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    private static void ReadMetadata(BeatmapEntry entry, string folder, bool recursive)
+    private static void ReadMetadata(BeatmapEntry entry, string folder)
     {
         CheckParents(folder);
-        var folders = (recursive ? new[] { folder }.Concat(ChartFiles.GetSongFolders(folder)) : new[] { folder }).ToArray();
-        entry.Difficulties = ChartFiles.GetDifficulties(folder, recursive);
+        var folders = new[] { folder }.Concat(ChartFiles.GetSongFolders(folder)).ToArray();
+        entry.Difficulties = ChartFiles.GetDifficulties(folder);
         entry.CoverPath = folders
             .Select(ChartFiles.GetCover).FirstOrDefault(path => path != null);
         if (entry.CoverPath != null)
