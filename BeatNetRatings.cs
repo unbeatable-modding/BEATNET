@@ -64,7 +64,7 @@ internal sealed class BeatNetRatings
         label.alignment = TextAlignmentOptions.Center;
         fill = ui.Fill(track.transform, "Vote", BeatNetColor.Accent, 0f, 0f, 0f, 34f);
         fill.gameObject.AddComponent<RectMask2D>();
-        filledLabel = ui.Text(fill.transform, "", 17f, 0f, 0f, 474f, 34f, BeatNetColor.Background, BeatNetFont.Button);
+        filledLabel = ui.Text(fill.transform, "", 17f, 0f, 0f, 474f, 34f, BeatNetColor.OnAccent, BeatNetFont.Button);
         filledLabel.alignment = TextAlignmentOptions.Center;
         number = ui.Text(parent, "-", 22f, 1534f, 646f, 38f, 34f, BeatNetColor.Text, BeatNetFont.Button);
         number.alignment = TextAlignmentOptions.Right;
@@ -249,6 +249,16 @@ public sealed class BeatNetRatingSlider : Slider
     }
 
     internal void Tick(float seconds) => motion.Tick(seconds);
+
+    protected override void Set(float input, bool sendCallback = true)
+    {
+        var previous = BeatNetRatingMotion.Nearest(value);
+        base.Set(input, sendCallback);
+        if (IsDragging && sendCallback && previous != BeatNetRatingMotion.Nearest(value))
+        {
+            BeatNetSounds.Play(BeatNetSound.Hover);
+        }
+    }
 
     public override void OnPointerDown(PointerEventData data)
     {

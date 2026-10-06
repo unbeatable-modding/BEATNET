@@ -29,19 +29,19 @@ internal sealed class BeatNetRhythm
                 break;
             }
         }
-        var label = ui.Text(parent, "[beat tracking]", 11f, 218f, 32f, 150f, 20f);
+        var label = ui.Text(parent, "[beat tracking]", 11f, 218f, 32f, 150f, 20f, BeatNetColor.Accent);
         label.characterSpacing = 3f;
-        tempo = ui.Text(parent, "", 11f, 358f, 32f, 98f, 20f);
+        tempo = ui.Text(parent, "", 11f, 358f, 32f, 98f, 20f, BeatNetColor.Accent);
         tempo.alignment = TextAlignmentOptions.Right;
         tempo.characterSpacing = 3f;
         for (var i = 0; i < beats.Length; i++)
         {
             beats[i] = Mark(ui, parent, "Beat", 220f + i * 58f, 62f, 34f, false);
-            var number = ui.Text(parent, (i + 1).ToString(), 11f, 220f + i * 58f, 100f, 34f, 20f);
+            var number = ui.Text(parent, (i + 1).ToString(), 11f, 220f + i * 58f, 100f, 34f, 20f, BeatNetColor.Accent);
             number.alignment = TextAlignmentOptions.Center;
             if (i < 3)
             {
-                ui.Text(parent, "&", 11f, 264f + i * 58f, 100f, 14f, 20f);
+                ui.Text(parent, "&", 11f, 264f + i * 58f, 100f, 14f, 20f, BeatNetColor.Accent);
             }
         }
         for (var i = 0; i < crosses.Length; i++)
@@ -61,19 +61,19 @@ internal sealed class BeatNetRhythm
         var mark = ui.Rect(parent, name, left, top, size, size).gameObject.AddComponent<BeatNetMark>();
         mark.Cross = cross;
         mark.raycastTarget = false;
-        ui.Tint(mark, BeatNetColor.Text);
+        ui.Tint(mark, BeatNetColor.Accent);
         return mark;
     }
 
     private static BeatNetSpectrum Bars(BeatNetUi ui, Transform parent, string name, string label, float left, Vector2 range, float height)
     {
         var root = ui.Rect(parent, name, left, 852f, 146f, 48f);
-        var text = ui.Text(root, label, 10f, 0f, 0f, 146f, 14f);
+        var text = ui.Text(root, label, 10f, 0f, 0f, 146f, 14f, BeatNetColor.Accent);
         text.characterSpacing = 3f;
         text.alignment = TextAlignmentOptions.Center;
         var bars = ui.Rect(root, "Spectrum", 0f, 14f, 146f, 34f);
-        ui.Fill(bars, "Start", BeatNetColor.Text, 0f, 3f, 1.5f, 28f);
-        ui.Fill(bars, "End", BeatNetColor.Text, 144.5f, 3f, 1.5f, 28f);
+        ui.Fill(bars, "Start", BeatNetColor.Accent, 0f, 3f, 1.5f, 28f);
+        ui.Fill(bars, "End", BeatNetColor.Accent, 144.5f, 3f, 1.5f, 28f);
         var analyzer = bars.gameObject.AddComponent<SpectrumArray>();
         var transforms = new RectTransform[18];
         var samples = new RectTransform[18];
@@ -104,7 +104,7 @@ internal sealed class BeatNetRhythm
         }
         for (var i = 0; i < transforms.Length; i++)
         {
-            var bar = ui.Fill(bars, "Bar", BeatNetColor.Text, 10f + i * 123f / (transforms.Length - 1), 17f, 3f, 3f).rectTransform;
+            var bar = ui.Fill(bars, "Bar", BeatNetColor.Accent, 10f + i * 123f / (transforms.Length - 1), 17f, 3f, 3f).rectTransform;
             bar.pivot = new Vector2(0f, 0.5f);
             transforms[i] = bar;
             samples[i] = ui.Rect(bars, "Sample", 0f, 0f, 0f, sourceHeight.x);

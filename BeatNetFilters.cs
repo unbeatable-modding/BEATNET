@@ -109,16 +109,17 @@ internal sealed class BeatNetFilters
             ui.Style(choices[Sorting == "title" ? 0 : 1], selected: true);
             dialog.sizeDelta = new Vector2(660f, 296f);
         }
-        Add("Back", 30f, difficulties ? 406f : 226f, 600f, Close, 40f);
+        Add("Back", 30f, difficulties ? 406f : 226f, 600f, Close, 40f, BeatNetSound.None);
         if (difficulties) { dialog.sizeDelta = new Vector2(660f, 466f); }
         perspective.Set(3.4f);
         motion.Show();
         events.SetSelectedGameObject(controller ? choices[0].gameObject : null);
     }
 
-    private void Add(string text, float left, float top, float width, Action action, float height = 48f)
+    private void Add(string text, float left, float top, float width, Action action, float height = 48f, BeatNetSound sound = BeatNetSound.Confirm)
     {
         var button = ui.Button(dialog, text, left, top, width, height);
+        ((BeatNetControl)button).Sound = sound;
         button.onClick.AddListener(() => action());
         choices.Add(button);
     }

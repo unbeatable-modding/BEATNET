@@ -22,7 +22,13 @@ internal enum BeatNetColor
     Text,
     Muted,
     Accent,
+    AccentText,
+    OnAccent,
+    OnHighlight,
     Highlight,
+    Selected,
+    Decoration,
+    Cover,
     Disabled,
 }
 
@@ -32,6 +38,7 @@ internal enum BeatNetFont
     Heading,
     Button,
     Display,
+    Wallpaper,
     Prompt,
     Level,
     Score,
@@ -47,9 +54,10 @@ internal sealed class BeatNetUi : IDisposable
     private readonly Graphic background;
     private readonly Scrollbar? scrollbarTemplate;
     private readonly Dictionary<Graphic, BeatNetColor> graphics = new();
-    private readonly Dictionary<Selectable, (bool Primary, bool Selected)> styles = new();
+    private readonly Dictionary<Selectable, (bool Primary, bool Selected, bool Inverted)> styles = new();
     private readonly List<TMP_InputField> fields = new();
     private UIColorPalette? palette;
+    private BeatNetTheme theme = null!;
     private string paletteName = "";
     private bool controller;
     private BeatNetControl? back;
@@ -80,6 +88,7 @@ internal sealed class BeatNetUi : IDisposable
         }
         fonts[BeatNetFont.Display] = FindFont(available, "RubikMonoOne-Regular SDF HQ",
             FindFont(available, "RubikMonoOne-Regular SDF", fonts[BeatNetFont.Score]));
+        fonts[BeatNetFont.Wallpaper] = fonts[BeatNetFont.Display];
         foreach (var scrollbar in Resources.FindObjectsOfTypeAll<Scrollbar>())
         {
             if (scrollbar.name == "Scrollbar Vertical" && scrollbar.transform.parent?.name == "Scores"
@@ -116,20 +125,26 @@ internal sealed class BeatNetUi : IDisposable
             {
                 material.shader = shader;
             }
-            material.SetColor("_FaceColor", role == BeatNetFont.Rank || role == BeatNetFont.Display ? new Color(1f, 1f, 1f, 0f) : Color.white);
-            if (role == BeatNetFont.Rank || role == BeatNetFont.Display)
+            var outlined = role == BeatNetFont.Rank || role == BeatNetFont.Wallpaper;
+            material.SetColor("_FaceColor", outlined ? new Color(1f, 1f, 1f, 0f) : Color.white);
+            if (outlined)
             {
-                material.SetColor("_OutlineColor", ColorFor(BeatNetColor.Text));
+                material.SetColor("_OutlineColor", Color.white);
                 if (material.GetFloat("_OutlineWidth") == 0f)
                 {
-                    material.SetFloat("_OutlineWidth", role == BeatNetFont.Display ? 0.10f : 0.165f);
+                    material.SetFloat("_OutlineWidth", role == BeatNetFont.Rank ? 0.165f : 0.10f);
                 }
                 material.EnableKeyword("OUTLINE_ON");
+            }
+            if (role == BeatNetFont.Display)
+            {
+                material.SetFloat("_OutlineWidth", 0f);
+                material.DisableKeyword("OUTLINE_ON");
             }
         }
         text.font = font;
         text.fontSharedMaterial = material;
-        if (role == BeatNetFont.Display)
+        if (role == BeatNetFont.Display || role == BeatNetFont.Wallpaper)
         {
             text.fontStyle = FontStyles.Italic;
         }
@@ -175,26 +190,19 @@ internal sealed class BeatNetUi : IDisposable
             palette = entry.palette;
         }
         paletteName = name;
-        if (materials.TryGetValue(BeatNetFont.Rank, out var rank))
-        {
-            rank.SetColor("_OutlineColor", ColorFor(BeatNetColor.Text));
-        }
-        if (materials.TryGetValue(BeatNetFont.Display, out var display))
-        {
-            display.SetColor("_OutlineColor", ColorFor(BeatNetColor.Text));
-        }
+        theme = new BeatNetTheme(palette?.colors ?? new[] { template.color, background.color });
         foreach (var item in graphics)
         {
             if (item.Key != null)
             {
-                item.Key.color = ColorFor(item.Value);
+                ApplyTint(item.Key, item.Value);
             }
         }
         foreach (var item in styles)
         {
             if (item.Key != null)
             {
-                ApplyStyle(item.Key, item.Value.Primary, item.Value.Selected);
+                ApplyStyle(item.Key, item.Value.Primary, item.Value.Selected, item.Value.Inverted);
             }
         }
         foreach (var field in fields)
@@ -208,49 +216,55 @@ internal sealed class BeatNetUi : IDisposable
 
     private Color ColorFor(BeatNetColor tone)
     {
-        if (tone == BeatNetColor.Backdrop)
-        {
-            return new Color(0f, 0f, 0f, 0.78f);
-        }
-        if (tone == BeatNetColor.Highlight)
-        {
-            return Color.Lerp(ColorFor(BeatNetColor.Background), ColorFor(BeatNetColor.Text), 0.22f);
-        }
-        if (tone == BeatNetColor.Disabled)
-        {
-            var dark = palette != null && palette.colors.Length > 4 ? palette.colors[4] : Color.black;
-            dark.a = 1f;
-            return Color.Lerp(ColorFor(BeatNetColor.Text), dark, 0.55f);
-        }
-        var slot = tone == BeatNetColor.Background ? 1
-            : tone == BeatNetColor.Surface ? 2
-            : tone == BeatNetColor.Card || tone == BeatNetColor.Line ? 3 : 0;
-        var color = palette != null && palette.colors.Length > slot ? palette.colors[slot]
-            : tone == BeatNetColor.Background || tone == BeatNetColor.Surface || tone == BeatNetColor.Card
-                ? background.color : template.color;
-        color.a = tone == BeatNetColor.Muted ? 0.8f : 1f;
-        return color;
+        return theme[tone];
     }
 
     internal void Tint(Graphic graphic, BeatNetColor tone)
     {
         graphics[graphic] = tone;
-        graphic.color = ColorFor(tone);
+        ApplyTint(graphic, tone);
     }
 
-    internal void Style(Selectable control, bool primary = false, bool selected = false)
+    private void ApplyTint(Graphic graphic, BeatNetColor tone)
     {
-        styles[control] = (primary, selected);
-        ApplyStyle(control, primary, selected);
+        var color = ColorFor(tone);
+        if (graphic is TextMeshProUGUI text && text.fontSharedMaterial is Material material
+            && material.GetColor("_FaceColor").a == 0f && material.GetFloat("_OutlineWidth") > 0f)
+        {
+            material.SetColor("_OutlineColor", color);
+            if (text.materialForRendering is Material rendered)
+            {
+                rendered.SetColor("_OutlineColor", color);
+            }
+            text.color = Color.white;
+            text.SetMaterialDirty();
+            return;
+        }
+        graphic.color = color;
     }
 
-    private void ApplyStyle(Selectable control, bool primary, bool selected)
+    internal void Style(Selectable control, bool primary = false, bool selected = false, bool inverted = false)
     {
-        control.colors = Colors(primary, selected);
+        styles[control] = (primary, selected, inverted);
+        ApplyStyle(control, primary, selected, inverted);
+    }
+
+    private void ApplyStyle(Selectable control, bool primary, bool selected, bool inverted)
+    {
+        var colors = Colors(primary, selected);
+        if (inverted)
+        {
+            var normal = colors.normalColor;
+            colors.normalColor = colors.highlightedColor;
+            colors.highlightedColor = colors.pressedColor = colors.selectedColor = normal;
+        }
+        control.colors = colors;
         if (control is BeatNetControl button)
         {
-            button.NormalText = ColorFor(primary ? BeatNetColor.Background : BeatNetColor.Text);
-            button.HighlightText = ColorFor(BeatNetColor.Text);
+            var normal = ColorFor(primary ? BeatNetColor.OnAccent : BeatNetColor.Text);
+            var highlight = ColorFor(BeatNetColor.OnHighlight);
+            button.NormalText = inverted ? highlight : normal;
+            button.HighlightText = inverted ? normal : highlight;
             button.DisabledText = ColorFor(BeatNetColor.Disabled);
             button.Refresh();
         }
@@ -312,6 +326,21 @@ internal sealed class BeatNetUi : IDisposable
         return text;
     }
 
+    internal void Backdrop(Transform parent)
+    {
+        var root = Rect(parent, "Background typography", 0f, 0f, 1640f, 188f);
+        var mask = root.gameObject.AddComponent<Image>();
+        mask.raycastTarget = false;
+        root.gameObject.AddComponent<Mask>().showMaskGraphic = false;
+        var name = Text(root, "BEATNET", 240f, 46f, -38f, 1548f, 270f, BeatNetColor.Decoration, BeatNetFont.Wallpaper);
+        name.alignment = TextAlignmentOptions.Center;
+        name.enableAutoSizing = true;
+        name.fontSizeMin = 180f;
+        name.fontSizeMax = 240f;
+        name.characterSpacing = 5f;
+        name.overflowMode = TextOverflowModes.Overflow;
+    }
+
     internal Button Button(Transform parent, string value, float left, float top, float width, float height, bool primary = false)
     {
         var rect = Rect(parent, "Button", left, top, width, height);
@@ -322,7 +351,7 @@ internal sealed class BeatNetUi : IDisposable
         button.targetGraphic = image;
         button.navigation = new Navigation { mode = Navigation.Mode.None };
         Style(button, primary);
-        var text = Text(rect, value, 22f, 16f, 0f, width - 32f, height, primary ? BeatNetColor.Background : BeatNetColor.Text, BeatNetFont.Button);
+        var text = Text(rect, value, 22f, 16f, 0f, width - 32f, height, primary ? BeatNetColor.OnAccent : BeatNetColor.Text, BeatNetFont.Button);
         text.alignment = TextAlignmentOptions.Center;
         button.Label = text;
         button.Refresh();
@@ -394,10 +423,10 @@ internal sealed class BeatNetUi : IDisposable
 
     private ColorBlock Colors(bool primary = false, bool selected = false) => new()
     {
-        normalColor = ColorFor(primary ? BeatNetColor.Accent : selected ? BeatNetColor.Surface : BeatNetColor.Card),
-        highlightedColor = ColorFor(BeatNetColor.Highlight),
-        pressedColor = ColorFor(BeatNetColor.Highlight),
-        selectedColor = ColorFor(BeatNetColor.Highlight),
+        normalColor = ColorFor(primary ? BeatNetColor.Accent : selected ? BeatNetColor.Selected : BeatNetColor.Card),
+        highlightedColor = ColorFor(BeatNetColor.Decoration),
+        pressedColor = ColorFor(BeatNetColor.Decoration),
+        selectedColor = ColorFor(BeatNetColor.Decoration),
         disabledColor = ColorFor(BeatNetColor.Card),
         colorMultiplier = 1f,
         fadeDuration = 0.12f,
@@ -462,7 +491,7 @@ internal sealed class BeatNetUi : IDisposable
         var image = Fill(parent, "List", BeatNetColor.Background, left, top, width, height, true);
         var viewport = Rect(image.transform, "Viewport", 0f, 0f, width, height);
         viewport.gameObject.AddComponent<RectMask2D>();
-        var scroll = image.gameObject.AddComponent<ScrollRect>();
+        var scroll = image.gameObject.AddComponent<BeatNetScroll>();
         scroll.viewport = viewport;
         scroll.content = Rect(viewport, "Content", 0f, 0f, width, height);
         scroll.horizontal = false;
@@ -470,8 +499,8 @@ internal sealed class BeatNetUi : IDisposable
         scroll.elasticity = 0.1f;
         scroll.inertia = true;
         scroll.decelerationRate = 0.135f;
-        scroll.scrollSensitivity = 40f;
-        scroll.verticalScrollbar = Scrollbar(image.transform, width + 8f, 0f, height);
+        scroll.scrollSensitivity = 120f;
+        scroll.verticalScrollbar = Scrollbar(image.transform, width + 6f, 0f, height);
         scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
         return scroll;
     }

@@ -71,7 +71,7 @@ internal sealed class BeatNetKeyboard
         Add(ui, "Space", 30f, 164f, () => Edit(field.text + " "));
         Add(ui, "Delete", 204f, 156f, Delete);
         Add(ui, "Clear", 370f, 156f, () => Edit(""));
-        Add(ui, action, 536f, 156f, Submit, true, BeatNetSound.None);
+        Add(ui, action, 536f, 156f, Submit, true, action == "Search" ? BeatNetSound.None : BeatNetSound.Confirm);
         Add(ui, "Back", 702f, 148f, Close, sound: BeatNetSound.None);
         if (title != "Search")
         {

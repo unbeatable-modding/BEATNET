@@ -19,6 +19,8 @@ internal sealed class BeatNetMusic : IDisposable
     private bool held;
 
     internal static bool BlocksChanges => holds > 0;
+    internal static ArcadeSongDatabase.BeatmapItem? Playing => ArcadeBGMManager.Instance != null
+        ? Current.GetValue(ArcadeBGMManager.Instance) as ArcadeSongDatabase.BeatmapItem : null;
     internal ArcadeSongDatabase.BeatmapItem? Item => current ?? pending;
     internal bool IsBackground => manager != null && Item != null
         && Item.Path == (Background.GetValue(manager) as string) + "/Beginner";

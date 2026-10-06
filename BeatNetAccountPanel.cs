@@ -46,7 +46,7 @@ internal sealed class BeatNetAccountPanel
         state = ui.Text(window, "Not logged in", 19f, 1140f, 34f, 400f, 42f);
         state.richText = false;
         state.alignment = TextAlignmentOptions.Right;
-        Manage = ui.Button(window, "Manage", 1320f, 84f, 220f, 48f);
+        Manage = ui.Button(window, "Manage", 1320f, 84f, 220f, 48f, true);
         Manage.onClick.AddListener(Open);
         var overlay = ui.Button(parent, "", 0f, 0f, 0f, 0f);
         var overlayRect = (RectTransform)overlay.transform;
@@ -99,7 +99,8 @@ internal sealed class BeatNetAccountPanel
         message.richText = false;
         submit = ui.Button(dialog, "Log in", 30f, 526f, 247f, 48f, true);
         logout = ui.Button(dialog, "Log out", 293f, 526f, 247f, 48f);
-        back = ui.Button(dialog, "Back", 30f, 592f, 510f, 40f);
+        back = ui.Button(dialog, "Back", 30f, 592f, 510f, 40f, true);
+        ((BeatNetControl)back).Sound = BeatNetSound.None;
         submit.onClick.AddListener(Submit);
         logout.onClick.AddListener(() => { validation = string.Empty; Plugin.Accounts?.Logout(); });
         back.onClick.AddListener(Close);
@@ -155,6 +156,7 @@ internal sealed class BeatNetAccountPanel
     {
         if (keyboard?.IsOpen == true) { keyboard.Close(); return; }
         if (!IsOpen || motion.IsHiding) { return; }
+        BeatNetSounds.Play(BeatNetSound.Back);
         username.DeactivateInputField();
         password.DeactivateInputField();
         confirmation.DeactivateInputField();
@@ -217,6 +219,7 @@ internal sealed class BeatNetAccountPanel
         username.DeactivateInputField();
         password.DeactivateInputField();
         confirmation.DeactivateInputField();
+        BeatNetSounds.Move(direction, step);
         events.SetSelectedGameObject(choices[next].gameObject);
     }
 
@@ -228,7 +231,7 @@ internal sealed class BeatNetAccountPanel
         {
             if (controller) { keyboard = keyboards[field]; keyboard.Open(); }
             else if (field.isFocused) { field.DeactivateInputField(); events.SetSelectedGameObject(submit.gameObject); }
-            else { field.ActivateInputField(); }
+            else { BeatNetSounds.Play(BeatNetSound.Confirm); field.ActivateInputField(); }
         }
     }
 }
