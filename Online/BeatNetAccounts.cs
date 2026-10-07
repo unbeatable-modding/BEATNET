@@ -15,7 +15,7 @@ using UnityEngine;
 
 namespace BEATNET;
 
-internal sealed class BeatNetAccounts : IDisposable
+internal sealed partial class BeatNetAccounts : IDisposable
 {
     private readonly BeatNetOnlineClient client;
     private readonly BeatmapInstaller installer;
@@ -67,6 +67,7 @@ internal sealed class BeatNetAccounts : IDisposable
         activity = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
         this.client = client ?? new BeatNetOnlineClient(dataPath);
         installer = new BeatmapInstaller(dataPath);
+        InitializeDownloads(dataPath);
         var root = Path.Combine(dataPath, "BEATNET_data");
         sessionPath = Path.Combine(root, "account-key.json");
         queuePath = Path.Combine(root, "score-queue.json");
@@ -270,6 +271,7 @@ internal sealed class BeatNetAccounts : IDisposable
             });
         }
         SyncProfile();
+        UploadDownloads();
         if (User != null && !Busy)
         {
             var key = Key;
@@ -596,7 +598,7 @@ internal sealed class BeatNetAccounts : IDisposable
         if (disposed) { return; }
         disposed = true;
         cancellation.Cancel();
-        var tasks = new[] { accountTask, scoreTask, revisionTask, profileTask }.Where(t => t != null).Cast<Task>();
+        var tasks = new[] { accountTask, scoreTask, revisionTask, profileTask, downloadTask }.Where(t => t != null).Cast<Task>();
         _ = Task.WhenAll(tasks).ContinueWith(done => { _ = done.Exception; client.Dispose(); activity.Dispose(); cancellation.Dispose(); }, TaskScheduler.Default);
     }
 

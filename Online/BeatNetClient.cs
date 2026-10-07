@@ -57,7 +57,7 @@ internal sealed class BeatNetClient : IDisposable
             var batch = ids.Skip(start).Take(100).ToArray();
             var values = await ReadJson<RatingBatch>("/api/ratings?ids=" + string.Join(",", batch), token).ConfigureAwait(false);
             if (values.Items == null || values.Items.Length != batch.Length || values.Items.Any(value => !batch.Contains(value.Id)
-                || double.IsNaN(value.Average) || double.IsInfinity(value.Average) || value.Average < 0 || value.Average > 10 || value.Count < 0))
+                || double.IsNaN(value.Average) || double.IsInfinity(value.Average) || value.Average < 0 || value.Average > 10 || value.Count < 0 || value.DownloadCount < 0))
             {
                 throw new InvalidDataException("The server returned invalid ratings");
             }
@@ -106,7 +106,7 @@ internal sealed class BeatNetClient : IDisposable
     private static void ValidateBeatmap(BeatmapEntry? beatmap)
     {
         if (beatmap == null || !IsId(beatmap.Id) || beatmap.Revision == null
-            || !IsId(beatmap.Revision.Id) || beatmap.Revision.Number < 1)
+            || !IsId(beatmap.Revision.Id) || beatmap.Revision.Number < 1 || beatmap.DownloadCount < 0)
         {
             throw new InvalidDataException("The server returned invalid beatmap metadata");
         }

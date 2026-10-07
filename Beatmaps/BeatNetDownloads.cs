@@ -16,7 +16,9 @@ internal sealed class BeatNetDownloads : IDisposable
     private bool playing;
     private readonly BeatNetClient client = new("http://92.5.175.72");
     private readonly BeatmapInstaller installer;
-    private Task<List<BeatmapEntry>>? pending;
+    private Task<(List<BeatmapEntry> Entries, BeatmapEntry Beatmap)>? pending;
+    private Action<BeatmapEntry>? completedDownload;
+    internal Func<Action<BeatmapEntry>?>? Started { get; set; }
     private volatile string progress = string.Empty;
     private volatile float fraction;
     private readonly Dictionary<string, RevisionJob> revisionJobs = new();
@@ -143,7 +145,9 @@ internal sealed class BeatNetDownloads : IDisposable
             var completed = Active!;
             try
             {
-                Entries = pending.GetAwaiter().GetResult();
+                var result = pending.GetAwaiter().GetResult();
+                Entries = result.Entries;
+                completedDownload?.Invoke(result.Beatmap);
                 NeedsReload = true;
                 Error = string.Empty;
             }
@@ -156,6 +160,7 @@ internal sealed class BeatNetDownloads : IDisposable
                 Error = $"Download failed / {completed.Title}";
             }
             ids.Remove(completed.Id);
+            completedDownload = null;
             pending = null;
             Active = null;
             Version++;
@@ -166,6 +171,7 @@ internal sealed class BeatNetDownloads : IDisposable
         }
         var entry = queue.Dequeue();
         Active = entry;
+        completedDownload = Started?.Invoke();
         progress = "Starting download";
         fraction = 0f;
         var token = cancellation.Token;
@@ -174,7 +180,7 @@ internal sealed class BeatNetDownloads : IDisposable
             var details = await client.Get(entry.Id, token).ConfigureAwait(false);
             await installer.Install(client, details, value => progress = value, token,
                 value => fraction = value).ConfigureAwait(false);
-            return installer.Library();
+            return (installer.Library(), details);
         }, token);
     }
 
@@ -194,7 +200,7 @@ internal sealed class BeatNetDownloads : IDisposable
         queue.Clear();
         ids.Clear();
         var task = Task.WhenAll(revisionJobs.Values.Select(job => job.Task).Where(job => job != null).Cast<Task>()
-            .Append(pending ?? Task.CompletedTask));
+            .Append((Task?)pending ?? Task.CompletedTask));
         _ = task.ContinueWith(done =>
         {
             _ = done.Exception;

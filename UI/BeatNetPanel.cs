@@ -32,6 +32,7 @@ public sealed class BeatNetPanel : MonoBehaviour
     private readonly List<TextMeshProUGUI> rowLabels = new();
     private readonly List<TextMeshProUGUI> rowDetails = new();
     private readonly List<TextMeshProUGUI> rowStates = new();
+    private readonly List<TextMeshProUGUI> rowDownloads = new();
     private readonly List<TextMeshProUGUI> difficultyNames = new();
     private readonly List<TextMeshProUGUI> difficultyLevels = new();
     private readonly List<TextMeshProUGUI> levelLabels = new();
@@ -302,7 +303,10 @@ public sealed class BeatNetPanel : MonoBehaviour
             text.fontSize = 25f;
             ui.Font(text, BeatNetFont.Button);
             text.rectTransform.anchoredPosition = new Vector2(22f, -4f);
-            text.rectTransform.sizeDelta = new Vector2(ListWidth - 48f, 39f);
+            text.rectTransform.sizeDelta = new Vector2(ListWidth - 240f, 39f);
+            var downloads = ui.Text(row.transform, "", 15f, ListWidth - 198f, 4f, 174f, 39f, BeatNetColor.AccentText);
+            downloads.alignment = TextAlignmentOptions.Right;
+            rowDownloads.Add(downloads);
             rowDetails.Add(ui.Text(row.transform, "", 18f, 22f, 43f, 510f, 27f, BeatNetColor.Muted));
             var state = ui.Text(row.transform, "", 15f, 530f, 43f, ListWidth - 554f, 27f, BeatNetColor.AccentText);
             state.alignment = TextAlignmentOptions.Right;
@@ -966,7 +970,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         var filter = query;
         var sorting = filters.Sorting;
         var difficulties = filters.Difficulties.ToArray();
-        var cachedRatings = libraryEntries.ToDictionary(item => item.Id, item => (item.Rating, item.RatingCount));
+        var cachedRatings = libraryEntries.ToDictionary(item => item.Id, item => (item.Rating, item.RatingCount, item.DownloadCount));
         var focused = focusId;
         var source = client;
         var cachedPage = !local && filter.Length == 0 && offset == 0 && sorting == "title" && difficulties.Length == 0 ? firstPage : null;
@@ -995,7 +999,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             {
                 foreach (var entry in entries)
                 {
-                    if (cachedRatings.TryGetValue(entry.Id, out var rating)) { entry.Rating = rating.Rating; entry.RatingCount = rating.RatingCount; }
+                    if (cachedRatings.TryGetValue(entry.Id, out var rating)) { entry.Rating = rating.Rating; entry.RatingCount = rating.RatingCount; entry.DownloadCount = rating.DownloadCount; }
                 }
                 using var ratingTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
                 ratingTimeout.CancelAfter(TimeSpan.FromSeconds(8));
@@ -1005,7 +1009,7 @@ public sealed class BeatNetPanel : MonoBehaviour
                     var lookup = summaries.ToDictionary(item => item.Id);
                     foreach (var entry in entries)
                     {
-                        if (lookup.TryGetValue(entry.Id, out var rating)) { entry.Rating = rating.Average; entry.RatingCount = rating.Count; }
+                        if (lookup.TryGetValue(entry.Id, out var rating)) { entry.Rating = rating.Average; entry.RatingCount = rating.Count; entry.DownloadCount = rating.DownloadCount; }
                     }
                 }
                 catch (Exception) when (!token.IsCancellationRequested) { }
@@ -1119,8 +1123,17 @@ public sealed class BeatNetPanel : MonoBehaviour
         rowLabels[index].text = beatmap.Artist.Length == 0 ? beatmap.Title : $"{beatmap.Title} - {beatmap.Artist}";
         rowDetails[index].text = beatmap.Creator;
         rowStates[index].text = RowState(beatmap);
+        rowDownloads[index].text = RowDownloads(beatmap);
         ui.Style(rows[index], selected: index == selectedIndex);
         rowMarkers[index].gameObject.SetActive(index == selectedIndex);
+    }
+
+    private string RowDownloads(BeatmapEntry beatmap)
+    {
+        if (!BeatNetClient.IsId(beatmap.Id)) { return string.Empty; }
+        var count = beatmap.DownloadCount;
+        if (Plugin.Accounts?.DownloadCounts.TryGetValue(beatmap.Id, out var tracked) == true) { count = Math.Max(count, tracked); }
+        return $"{count:N0} DOWNLOAD{(count == 1 ? "" : "S")}";
     }
 
     private string RowState(BeatmapEntry beatmap)
@@ -1170,6 +1183,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             selected = latest.TryGetValue(beatmap.Id, out var cached) ? cached : beatmap;
             selected.Rating = beatmap.Rating;
             selected.RatingCount = beatmap.RatingCount;
+            selected.DownloadCount = beatmap.DownloadCount;
             ShowDetails(selected);
             RefreshControls();
             return;
@@ -1792,7 +1806,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             }
             status.text = downloads.Error;
         }
-        var stamp = $"{downloads.Active?.Id}/{downloads.Progress}/{downloads.Count}/{downloads.Version}";
+        var stamp = $"{downloads.Active?.Id}/{downloads.Progress}/{downloads.Count}/{downloads.Version}/{Plugin.Accounts?.DownloadVersion}";
         if (stamp == downloadStamp)
         {
             return;
@@ -1801,6 +1815,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         for (var index = 0; index < page.Items.Length; index++)
         {
             rowStates[index].text = RowState(page.Items[index]);
+            rowDownloads[index].text = RowDownloads(page.Items[index]);
         }
         RefreshControls();
         if (downloads.Count > 0)

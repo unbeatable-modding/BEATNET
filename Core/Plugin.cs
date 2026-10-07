@@ -26,6 +26,7 @@ public sealed class Plugin : BaseUnityPlugin
         CustomSongLoader.Logger = Logger;
         Downloads = new BeatNetDownloads(Application.persistentDataPath);
         Accounts = new BeatNetAccounts(Application.persistentDataPath);
+        Downloads.Started = () => Accounts?.TrackDownload();
         var settings = ArcadeSelection.OpenConfig(Paths.ConfigPath);
         ArcadeSelection.Initialize(settings, Logger);
         settings.Save();

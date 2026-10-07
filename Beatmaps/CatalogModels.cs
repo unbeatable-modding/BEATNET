@@ -21,6 +21,7 @@ internal sealed class BeatmapEntry
     public string Submitter { get; set; } = string.Empty;
     public double Rating { get; set; }
     public int RatingCount { get; set; }
+    public long DownloadCount { get; set; }
     public BeatmapRevision Revision { get; set; } = new();
     public BeatmapFile[] Files { get; set; } = Array.Empty<BeatmapFile>();
     public string[] Difficulties { get; set; } = Array.Empty<string>();
@@ -46,6 +47,7 @@ internal sealed class RatingBatch
 internal sealed class RatingSummary
 {
     public string Id { get; set; } = string.Empty;
+    public long DownloadCount { get; set; }
     public double Average { get; set; }
     public int Count { get; set; }
 }
