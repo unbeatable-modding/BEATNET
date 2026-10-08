@@ -1,3 +1,4 @@
+using System;
 using Arcade.UI;
 using HarmonyLib;
 using TMPro;
@@ -6,14 +7,17 @@ using UnityEngine.UI;
 
 namespace BEATNET;
 
-internal sealed class BeatNetRhythm
+internal sealed class BeatNetRhythm : IDisposable
 {
+    private readonly BeatNetAudioLevel audio = new();
     private readonly BeatNetMark[] beats = new BeatNetMark[4];
     private readonly RectTransform[] crosses = new RectTransform[4];
     private readonly AnimationCurve turn;
     private readonly BeatNetSpectrum bass;
     private readonly BeatNetSpectrum treble;
     private readonly TextMeshProUGUI tempo;
+    private readonly TextMeshProUGUI points;
+    private readonly BeatNetBpAnimation reward;
     private int bpm = -1;
 
     internal BeatNetRhythm(BeatNetUi ui, Transform parent, Transform content)
@@ -34,6 +38,11 @@ internal sealed class BeatNetRhythm
         tempo = ui.Text(parent, "", 11f, 358f, 32f, 98f, 20f, BeatNetColor.Accent);
         tempo.alignment = TextAlignmentOptions.Right;
         tempo.characterSpacing = 3f;
+        points = ui.Text(parent, "", 16f, 218f, 128f, 210f, 28f, BeatNetColor.Text, BeatNetFont.Score);
+        points.alignment = TextAlignmentOptions.Right;
+        points.enableAutoSizing = true;
+        points.fontSizeMin = 10f;
+        points.fontSizeMax = 16f;
         for (var i = 0; i < beats.Length; i++)
         {
             beats[i] = Mark(ui, parent, "Beat", 220f + i * 58f, 62f, 34f, false);
@@ -54,6 +63,7 @@ internal sealed class BeatNetRhythm
         }
         bass = Bars(ui, content, "Bass", "[bass]", 220f, new Vector2(0.22408807f, 0.33410543f), 150f);
         treble = Bars(ui, content, "Treble", "[treble]", 556f, new Vector2(0f, 0.07932838f), 90f);
+        reward = new BeatNetBpAnimation(ui, parent, points);
     }
 
     private static BeatNetMark Mark(BeatNetUi ui, Transform parent, string name, float left, float top, float size, bool cross)
@@ -119,6 +129,26 @@ internal sealed class BeatNetRhythm
 
     internal void Tick()
     {
+        var accounts = Plugin.Accounts;
+        reward.Tick(Time.unscaledDeltaTime);
+        var value = reward.Value ?? accounts?.BpReward?.Before ?? accounts?.Bp;
+        var text = accounts?.User == null ? "BP / log in" : value.HasValue
+            ? BeatNetNumbers.Format(value.Value) + " BP" : "BP / syncing";
+        if (points.text != text)
+        {
+            points.text = text;
+            points.ForceMeshUpdate();
+            var count = points.textInfo.characterCount;
+            if (count > 0)
+            {
+                var character = points.textInfo.characterInfo[count - 1];
+                var metrics = character.textElement.glyph.metrics;
+                var right = character.origin + (metrics.horizontalBearingX + metrics.width) * character.scale;
+                var margin = points.margin;
+                margin.z -= points.rectTransform.rect.xMax - right;
+                points.margin = margin;
+            }
+        }
         var playing = ArcadeBGMManager.Instance != null && !ArcadeBGMManager.Paused && ArcadeBGMManager.BPM > 0;
         var currentBpm = playing ? Mathf.RoundToInt(ArcadeBGMManager.BPM * FileStorage.beatmapOptions.songSpeed) : 0;
         if (bpm != currentBpm)
@@ -137,8 +167,19 @@ internal sealed class BeatNetRhythm
 
     internal void LateTick()
     {
-        bass.Sync();
-        treble.Sync();
+        var audible = audio.Read();
+        bass.Sync(audible);
+        treble.Sync(audible);
+    }
+
+    internal void Reward(RectTransform source, BeatNetBpReward value) => reward.Start(source, value);
+
+    internal void CancelReward() => reward.Cancel();
+
+    public void Dispose()
+    {
+        reward.Cancel();
+        audio.Dispose();
     }
 }
 
@@ -162,7 +203,7 @@ internal sealed class BeatNetSpectrum
         this.minimum = minimum;
     }
 
-    internal void Sync()
+    internal void Sync(bool audible)
     {
         var active = source != null && source.isActiveAndEnabled && sourceBars != null;
         analyzer.enabled = !active;
@@ -170,12 +211,24 @@ internal sealed class BeatNetSpectrum
         for (var i = 0; i < bars.Length; i++)
         {
             var size = bars[i].sizeDelta;
-            size.y = Height(values[i].sizeDelta.y, minimum);
+            size.y = audible && ArcadeAudioSpectrum.IsReady()
+                ? Height(values[i].sizeDelta.y, minimum)
+                : Decay(size.y, Time.unscaledDeltaTime);
             bars[i].sizeDelta = size;
+            if (!audible)
+            {
+                var sample = samples[i].sizeDelta;
+                sample.y = minimum;
+                samples[i].sizeDelta = sample;
+            }
         }
     }
 
-    internal static float Height(float value, float minimum) => 3f + 31f * (1f - Mathf.Exp(-Mathf.Max(0f, value - minimum) / 31f));
+    internal static float Height(float value, float minimum) => float.IsNaN(value) || float.IsInfinity(value)
+        ? 3f : 3f + 31f * (1f - Mathf.Exp(-Mathf.Max(0f, value - minimum) / 31f));
+
+    internal static float Decay(float height, float delta) => float.IsNaN(height) || float.IsInfinity(height)
+        ? 3f : Mathf.MoveTowards(height, 3f, 200f * Mathf.Max(0f, delta));
 }
 
 internal abstract class BeatNetGraphic : MaskableGraphic
@@ -233,6 +286,99 @@ internal sealed class BeatNetMark : BeatNetGraphic
         mesh.AddVert(new Vector3(rect.xMax - 2f, rect.yMin), color, Vector2.zero);
         mesh.AddTriangle(start, start + 1, start + 2);
         mesh.AddTriangle(start + 2, start + 3, start);
+    }
+}
+
+internal sealed class BeatNetBpAnimation
+{
+    private readonly RectTransform root;
+    private readonly RectTransform square;
+    private readonly RectTransform[] pieces = new RectTransform[8];
+    private readonly CanvasGroup group;
+    private readonly TextMeshProUGUI target;
+    private BeatNetBpReward? reward;
+    private Vector3 origin;
+    private float elapsed;
+
+    internal double? Value => reward == null ? null : Count(reward.Before, reward.After, elapsed);
+    internal bool Active => reward != null;
+
+    internal BeatNetBpAnimation(BeatNetUi ui, Transform parent, TextMeshProUGUI target)
+    {
+        this.target = target;
+        root = ui.Rect(parent, "Bp reward", 0f, 0f, 1640f, 940f);
+        group = root.gameObject.AddComponent<CanvasGroup>();
+        group.blocksRaycasts = group.interactable = false;
+        square = ui.Fill(root, "Square", BeatNetColor.Accent, 0f, 0f, 24f, 24f).rectTransform;
+        square.pivot = new Vector2(0.5f, 0.5f);
+        for (var index = 0; index < pieces.Length; index++)
+        {
+            pieces[index] = ui.Fill(root, "Fragment", BeatNetColor.Accent, 0f, 0f, 7f, 7f).rectTransform;
+            pieces[index].pivot = new Vector2(0.5f, 0.5f);
+        }
+        root.gameObject.SetActive(false);
+    }
+
+    internal void Start(RectTransform source, BeatNetBpReward value)
+    {
+        Cancel();
+        reward = value;
+        elapsed = 0f;
+        root.SetAsLastSibling();
+        root.gameObject.SetActive(true);
+        origin = root.InverseTransformPoint(source.TransformPoint(source.rect.center));
+        square.gameObject.SetActive(true);
+        foreach (var piece in pieces) { piece.gameObject.SetActive(false); }
+        Tick(0f);
+    }
+
+    internal void Tick(float delta)
+    {
+        if (reward == null) { return; }
+        var accounts = Plugin.Accounts;
+        if (accounts?.BpReward != reward || accounts.UserId + "/" + accounts.Key != reward.Owner) { Cancel(); return; }
+        elapsed += Mathf.Max(0f, delta);
+        var rect = target.rectTransform;
+        var end = root.InverseTransformPoint(rect.TransformPoint(new Vector3(rect.rect.xMax - 44f, rect.rect.center.y)));
+        if (elapsed < 0.95f)
+        {
+            var travel = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((elapsed - 0.15f) / 0.8f));
+            var bend = Vector3.Lerp(origin, end, 0.5f) + new Vector3(100f, 120f);
+            square.localPosition = (1f - travel) * (1f - travel) * origin + 2f * (1f - travel) * travel * bend + travel * travel * end;
+            square.localScale = Vector3.one * Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / 0.15f));
+            square.localRotation = Quaternion.Euler(0f, 0f, 180f * travel);
+            group.alpha = 1f;
+        }
+        else
+        {
+            square.gameObject.SetActive(false);
+            var fade = Mathf.Clamp01((elapsed - 0.95f) / 0.25f);
+            group.alpha = 1f - Mathf.SmoothStep(0f, 1f, fade);
+            for (var index = 0; index < pieces.Length; index++)
+            {
+                var piece = pieces[index];
+                piece.gameObject.SetActive(true);
+                var angle = index * Mathf.PI / 4f;
+                piece.localPosition = end + new Vector3(Mathf.Cos(angle), Mathf.Sin(angle)) * (6f + 28f * fade);
+                piece.localScale = Vector3.one * (1f - fade * 0.8f);
+                piece.localRotation = Quaternion.Euler(0f, 0f, index * 45f + 90f * fade);
+            }
+        }
+        if (elapsed >= 2.5f) { Cancel(); }
+    }
+
+    internal static double Count(double before, double after, float time)
+    {
+        var progress = Mathf.Clamp01((time - 1.2f) / 1.3f);
+        var ease = 1f - (1f - progress) * (1f - progress) * (1f - progress);
+        return before + (after - before) * ease;
+    }
+
+    internal void Cancel()
+    {
+        if (reward != null) { Plugin.Accounts?.FinishBpReward(reward); }
+        reward = null;
+        root.gameObject.SetActive(false);
     }
 }
 

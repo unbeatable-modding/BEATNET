@@ -13,6 +13,9 @@ internal sealed partial class BeatNetAccounts
     private string downloadPath = string.Empty;
     private JArray downloadQueue = new();
     private Task? downloadTask;
+    private Task? downloadScan;
+    private string downloadSession = string.Empty;
+    private float nextDownloadScan;
     private float nextDownload;
     internal Dictionary<string, long> DownloadCounts { get; } = new();
     internal int DownloadVersion { get; private set; }
@@ -29,12 +32,61 @@ internal sealed partial class BeatNetAccounts
         var owner = UserId;
         return beatmap =>
         {
-            if (disposed || downloadQueue.OfType<JObject>().Any(item => (string?)item["owner"] == owner
-                && (string?)item["projectId"] == beatmap.Id)) { return; }
-            downloadQueue.Add(new JObject { ["owner"] = owner, ["projectId"] = beatmap.Id, ["revisionId"] = beatmap.Revision.Id });
+            if (!QueueDownload(beatmap, owner)) { return; }
             SaveDownloads();
             nextDownload = 0f;
         };
+    }
+
+    private bool QueueDownload(BeatmapEntry beatmap, string owner)
+    {
+        if (disposed || !BeatNetClient.IsId(beatmap.Id) || !BeatNetClient.IsId(beatmap.Revision.Id)
+            || downloadQueue.OfType<JObject>().Any(item => (string?)item["owner"] == owner
+                && (string?)item["projectId"] == beatmap.Id)) { return false; }
+        downloadQueue.Add(new JObject { ["owner"] = owner, ["projectId"] = beatmap.Id, ["revisionId"] = beatmap.Revision.Id });
+        return true;
+    }
+
+    private void SyncDownloads()
+    {
+        if (downloadScan?.IsCompleted == true) { _ = downloadScan.Exception; downloadScan = null; }
+        if (User == null) { downloadSession = string.Empty; return; }
+        if (playing || Busy || downloadScan != null || downloadSession == Key || Time.unscaledTime < nextDownloadScan) { return; }
+        var session = Key;
+        var owner = UserId;
+        var token = activity.Token;
+        downloadSession = session;
+        downloadScan = Task.Run(() =>
+        {
+            try
+            {
+                var entries = installer.Library();
+                token.ThrowIfCancellationRequested();
+                callbacks.Enqueue(() =>
+                {
+                    if (disposed || Key != session || UserId != owner) { return; }
+                    var changed = false;
+                    foreach (var entry in entries) { changed |= QueueDownload(entry, owner); }
+                    if (!changed) { return; }
+                    SaveDownloads();
+                    nextDownload = 0f;
+                });
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                callbacks.Enqueue(() => { if (downloadSession == session) { downloadSession = string.Empty; } });
+            }
+            catch (Exception)
+            {
+                callbacks.Enqueue(() =>
+                {
+                    if (downloadSession != session) { return; }
+                    downloadSession = string.Empty;
+                    nextDownloadScan = Time.unscaledTime + 30f;
+                    CustomSongLoader.Logger?.LogWarning("cannot sync installed downloads");
+                });
+            }
+        });
     }
 
     private void SaveDownloads()

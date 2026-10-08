@@ -53,6 +53,7 @@ public sealed class Plugin : BaseUnityPlugin
         {
             openButton.HandleInput();
             BeatNetUpdateMenu.Tick(openButton);
+            openButton.OpenBpReward();
             return;
         }
 

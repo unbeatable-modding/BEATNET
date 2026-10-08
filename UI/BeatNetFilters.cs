@@ -11,6 +11,14 @@ namespace BEATNET;
 internal sealed class BeatNetFilters
 {
     private static readonly string[] Slots = { "Beginner", "Easy", "Normal", "Hard", "UNBEATABLE", "Star" };
+    private static readonly (string Id, string Label, string Name)[] Orders =
+    {
+        ("title", "Alphabetical", "Alphabetical"),
+        ("rating", "Rating / Highest first", "Highest rating"),
+        ("rating_low", "Rating / Lowest first", "Lowest rating"),
+        ("downloads", "Most downloaded", "Most downloads"),
+        ("downloads_low", "Least downloaded", "Least downloads"),
+    };
     private readonly BeatNetUi ui;
     private readonly EventSystem events;
     private readonly Action changed;
@@ -28,6 +36,11 @@ internal sealed class BeatNetFilters
     internal Button Difficulty { get; }
     internal string Sorting { get; private set; } = "title";
     internal string[] Difficulties { get; private set; } = Array.Empty<string>();
+    internal void ClearDifficulties()
+    {
+        Difficulties = Array.Empty<string>();
+        Difficulty.GetComponentInChildren<TextMeshProUGUI>(true).text = "Difficulties / All";
+    }
     internal bool IsOpen => root.activeSelf;
     internal bool IsReady => motion.IsReady;
 
@@ -99,26 +112,28 @@ internal sealed class BeatNetFilters
                     : "Difficulties / " + (Difficulties.Length == 1 ? BeatNetScoreText.Difficulty(Difficulties[0].ToLowerInvariant()) : Difficulties.Length + " selected");
                 Hide();
                 changed();
-            });
+            }, primary: true);
             DrawChoices();
         }
         else
         {
-            Add("Alphabetical", 30f, 100f, 600f, () => SetSort("title"));
-            Add("Rating / Highest first", 30f, 160f, 600f, () => SetSort("rating"));
-            ui.Style(choices[Sorting == "title" ? 0 : 1], selected: true);
-            dialog.sizeDelta = new Vector2(660f, 296f);
+            for (var index = 0; index < Orders.Length; index++)
+            {
+                var order = Orders[index];
+                Add(order.Label, 30f, 100f + index * 60f, 600f, () => SetSort(order.Id));
+            }
+            ui.Style(choices[Math.Max(0, Array.FindIndex(Orders, order => order.Id == Sorting))], selected: true);
         }
-        Add("Back", 30f, difficulties ? 406f : 226f, 600f, Close, 40f, BeatNetSound.None);
-        if (difficulties) { dialog.sizeDelta = new Vector2(660f, 466f); }
+        Add("Back", 30f, 406f, 600f, Close, 40f, BeatNetSound.None, primary: true);
+        dialog.sizeDelta = new Vector2(660f, 466f);
         perspective.Set(3.4f);
         motion.Show();
         events.SetSelectedGameObject(controller ? choices[0].gameObject : null);
     }
 
-    private void Add(string text, float left, float top, float width, Action action, float height = 48f, BeatNetSound sound = BeatNetSound.Confirm)
+    private void Add(string text, float left, float top, float width, Action action, float height = 48f, BeatNetSound sound = BeatNetSound.Confirm, bool primary = false)
     {
-        var button = ui.Button(dialog, text, left, top, width, height);
+        var button = ui.Button(dialog, text, left, top, width, height, primary);
         ((BeatNetControl)button).Sound = sound;
         button.onClick.AddListener(() => action());
         choices.Add(button);
@@ -127,19 +142,19 @@ internal sealed class BeatNetFilters
     private void DrawChoices()
     {
         choices[0].GetComponentInChildren<TextMeshProUGUI>(true).text = (draft.Count == 0 ? "[x] " : "[ ] ") + "All";
-        ui.Style(choices[0], selected: draft.Count == 0);
+        ui.Style(choices[0], primary: draft.Count == 0);
         for (var index = 0; index < Slots.Length; index++)
         {
             var selected = draft.Contains(Slots[index]);
             choices[index + 1].GetComponentInChildren<TextMeshProUGUI>(true).text = (selected ? "[x] " : "[ ] ") + BeatNetScoreText.Difficulty(Slots[index].ToLowerInvariant());
-            ui.Style(choices[index + 1], selected: selected);
+            ui.Style(choices[index + 1], primary: selected);
         }
     }
 
     private void SetSort(string sorting)
     {
         Sorting = sorting;
-        Sort.GetComponentInChildren<TextMeshProUGUI>(true).text = sorting == "title" ? "Sort / Alphabetical" : "Sort / Rating";
+        Sort.GetComponentInChildren<TextMeshProUGUI>(true).text = "Sort / " + Orders.First(order => order.Id == sorting).Name;
         Hide();
         changed();
     }

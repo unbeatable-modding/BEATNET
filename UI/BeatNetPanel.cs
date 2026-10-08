@@ -25,6 +25,8 @@ public sealed class BeatNetPanel : MonoBehaviour
     private const float DetailSize = 686f;
     private const float TextLeft = 942f;
     private const float TextWidth = 630f;
+    private const float PanelDepth = 1.4f;
+    private readonly List<(BeatNetPerspective Perspective, float Offset)> depthLayers = new();
     private readonly BeatNetFrames pageFrames = new();
     private readonly BeatNetFrames detailFrames = new();
     private readonly List<Button> rows = new();
@@ -38,6 +40,7 @@ public sealed class BeatNetPanel : MonoBehaviour
     private readonly List<TextMeshProUGUI> levelLabels = new();
     private readonly List<Image> rowMarkers = new();
     private BeatNetRhythm rhythm = null!;
+    private BeatNetBpReward? bpReward;
     private float coverAfter;
     private BeatNetCovers covers = null!;
     private RawImage detailCover = null!;
@@ -72,6 +75,10 @@ public sealed class BeatNetPanel : MonoBehaviour
     private readonly BeatNetPreview audioPreview = new();
     private Button exploreTab = null!;
     private Button libraryTab = null!;
+    private Button leaderboardTab = null!;
+    private BeatNetBpBoard bpBoard = null!;
+    private GameObject beatmaps = null!;
+    private bool leaderboard;
     private TextMeshProUGUI leftPrompt = null!;
     private TextMeshProUGUI rightPrompt = null!;
     private Button play = null!;
@@ -126,11 +133,14 @@ public sealed class BeatNetPanel : MonoBehaviour
     private List<BeatmapEntry> libraryEntries = new();
     private Dictionary<string, BeatmapEntry> latest = new();
     private bool library;
+    private bool loggedIn;
     private bool removing;
     private string playDifficulty = string.Empty;
     private string focusId = string.Empty;
+    private string loginTarget = string.Empty;
     private int revisionVersion = -1;
     private int metadataVersion = -1;
+    private int scoreVersion = -1;
     private CancellationTokenSource? cancellation;
     private Task? pending;
     private Action? finish;
@@ -229,7 +239,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         ui.Tint(window.gameObject.AddComponent<Image>(), BeatNetColor.Background);
         fade = gameObject.AddComponent<CanvasGroup>();
         motion = BeatNetMotion.Create(gameObject, window, visibility: SetVisible);
-        ui.Backdrop(window);
+        ui.Backdrop(CreateDepthLayer(window, "Background text", 1.5f));
         close = ui.Back(window, back, number);
         close.onClick.AddListener(() =>
         {
@@ -246,15 +256,18 @@ public sealed class BeatNetPanel : MonoBehaviour
         slogan = ui.Text(window, "search beatmaps. online.", 13f, 530f, 26f, 574f, 22f, BeatNetColor.Accent);
         slogan.alignment = TextAlignmentOptions.Right;
         slogan.characterSpacing = 4f;
-        exploreTab = ui.Button(window, "Explore", 612f, 132f, 200f, 48f, true);
+        leaderboardTab = ui.Button(window, "Leaderboard", 504f, 132f, 200f, 48f);
+        ((BeatNetControl)leaderboardTab).Sound = BeatNetSound.None;
+        leaderboardTab.onClick.AddListener(() => SetTab(0));
+        exploreTab = ui.Button(window, "Explore", 720f, 132f, 200f, 48f, true);
         ((BeatNetControl)exploreTab).Sound = BeatNetSound.None;
         exploreTab.onClick.AddListener(() => SetLibrary(false));
-        libraryTab = ui.Button(window, "Library", 828f, 132f, 200f, 48f);
+        libraryTab = ui.Button(window, "Library", 936f, 132f, 200f, 48f);
         ((BeatNetControl)libraryTab).Sound = BeatNetSound.None;
         libraryTab.onClick.AddListener(() => SetLibrary(true));
-        leftPrompt = ui.Text(window, "LB", 24f, 526f, 132f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
+        leftPrompt = ui.Text(window, "LB", 18f, 418f, 160f, 70f, 22f, BeatNetColor.Text, BeatNetFont.Button);
         leftPrompt.alignment = TextAlignmentOptions.Center;
-        rightPrompt = ui.Text(window, "RB", 24f, 1044f, 132f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
+        rightPrompt = ui.Text(window, "RB", 24f, 1152f, 132f, 70f, 48f, BeatNetColor.Text, BeatNetFont.Button);
         rightPrompt.alignment = TextAlignmentOptions.Center;
         leftPrompt.gameObject.SetActive(controller);
         rightPrompt.gameObject.SetActive(controller);
@@ -422,9 +435,13 @@ public sealed class BeatNetPanel : MonoBehaviour
             textFades[text] = BeatNetFade.Create(text.gameObject);
         }
         BuildLoading();
-        rhythm = new BeatNetRhythm(ui, window, content);
+        var contentDepth = CreateDepthLayer(content, "Content controls", 0.75f,
+            new Component[] { search, find, previous, next, preview, install, play, difficulty, uninstall,
+                title, artist, mapper, highscore, rank, cleared, supportedHeading, updateLabel }
+                .Concat(difficultyNames).Concat(difficultyLevels).ToArray());
+        rhythm = new BeatNetRhythm(ui, window, contentDepth);
         BuildDifficultyPopup();
-        ratings = new BeatNetRatings(ui, content);
+        ratings = new BeatNetRatings(ui, contentDepth);
         ratings.Saved = UpdateRating;
         exploreScores = new BeatNetExploreScores(async (entry, modifiers, token) =>
         {
@@ -433,7 +450,7 @@ public sealed class BeatNetPanel : MonoBehaviour
                 ["revisionId"] = entry.Revision.Id, ["modifiers"] = modifiers }, token).ConfigureAwait(false);
             return result.ToObject<GlobalScores>() ?? throw new InvalidDataException("The server returned empty global highscores");
         });
-        filters = new BeatNetFilters(ui, transform, content, events, () =>
+        filters = new BeatNetFilters(ui, transform, contentDepth, events, () =>
         {
             focusId = library ? selected?.Id ?? ArcadeSelection.LibrarySong : string.Empty;
             LoadPage(0);
@@ -445,7 +462,32 @@ public sealed class BeatNetPanel : MonoBehaviour
             () => events.SetSelectedGameObject(controls[1].gameObject));
         accountPanel = new BeatNetAccountPanel(ui, transform, window, events);
         controls.Add(accountPanel.Manage);
+        controls.Add(leaderboardTab);
+        CreateDepthLayer(window, "Header controls", 0.75f, close, leaderboardTab, exploreTab, libraryTab, accountPanel.Manage, accountPanel.State, heading, slogan);
+        var children = new List<Transform>();
+        foreach (Transform child in content) { children.Add(child); }
+        beatmaps = ui.Rect(content, "Beatmaps", 0f, 0f, 1640f, 940f).gameObject;
+        foreach (var child in children) { child.SetParent(beatmaps.transform, false); }
+        bpBoard = new BeatNetBpBoard(ui, content, events);
         RefreshControls();
+    }
+
+    private RectTransform CreateDepthLayer(RectTransform parent, string name, float depth, params Component[] elements)
+    {
+        var layer = ui.Rect(parent, name, 0f, 0f, parent.sizeDelta.x, parent.sizeDelta.y);
+        layer.anchorMin = layer.anchorMax = layer.pivot = new Vector2(0.5f, 0.5f);
+        layer.anchoredPosition = Vector2.zero;
+        var offset = depth - 1f;
+        var perspective = new BeatNetPerspective(layer.gameObject.AddComponent<CanvasMousePerspective>(), PanelDepth * offset);
+        depthLayers.Add((perspective, offset));
+        foreach (var element in elements)
+        {
+            var rect = (RectTransform)element.transform;
+            var position = rect.anchoredPosition3D;
+            rect.SetParent(layer, false);
+            rect.anchoredPosition3D = position;
+        }
+        return layer;
     }
 
     private void BuildLoading()
@@ -715,10 +757,14 @@ public sealed class BeatNetPanel : MonoBehaviour
         closing = false;
         tabs.Reset();
         library = ArcadeSelection.Library;
+        leaderboard = false;
+        beatmaps.SetActive(true);
+        bpBoard.Hide();
+        Plugin.Accounts?.RefreshBp();
         if (library && focusId.Length == 0) { focusId = ArcadeSelection.LibrarySong; }
         KeepCursor = false;
         backgroundPerspective?.Set(0.25f, 3f);
-        windowPerspective.Set(1.4f);
+        windowPerspective.Set(PanelDepth);
         window.localRotation = Quaternion.identity;
         foreach (var system in FindObjectsByType<EventSystem>(FindObjectsSortMode.None))
         {
@@ -753,12 +799,14 @@ public sealed class BeatNetPanel : MonoBehaviour
         }
     }
 
-    internal bool ShowLibrary(string id)
+    internal bool ShowLibrary(string id, bool login = false)
     {
         if (closing || IsOpen && installing) { return false; }
-        if (IsOpen && library && focusId == id) { return true; }
+        loginTarget = login ? id : string.Empty;
+        if (IsOpen && library && selected?.Id == id) { return true; }
         focusId = id;
         query = string.Empty;
+        filters.ClearDifficulties();
         search.SetTextWithoutNotify(string.Empty);
         ArcadeSelection.SaveLibrary(true);
         if (IsOpen)
@@ -767,14 +815,28 @@ public sealed class BeatNetPanel : MonoBehaviour
             accountPanel.Hide();
             tabs.Reset();
             library = true;
+            leaderboard = false;
+            beatmaps.SetActive(true);
+            bpBoard.Hide();
             LoadPage(0);
         }
         else { Show(); }
         return IsOpen;
     }
 
+    internal bool ShowBpReward(BeatNetBpReward reward)
+    {
+        if (!ShowLibrary(reward.Project)) { return false; }
+        bpReward = reward;
+        return true;
+    }
+
     internal void Close(bool immediate = false, Action? finished = null)
     {
+        rhythm.CancelReward();
+        Plugin.Accounts?.FinishBpReward(bpReward);
+        bpReward = null;
+        loginTarget = string.Empty;
         openRequested = false;
         if (!IsOpen || closing && !immediate)
         {
@@ -887,20 +949,47 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void SetLibrary(bool value)
     {
-        if (installing || tabs.IsMoving || library == value)
+        SetTab(value ? 2 : 1);
+    }
+
+    private int TabIndex => leaderboard ? 0 : library ? 2 : 1;
+
+    private void SetTab(int index)
+    {
+        if (installing || tabs.IsMoving || TabIndex == index)
         {
             return;
         }
+        rhythm.CancelReward();
+        Plugin.Accounts?.FinishBpReward(bpReward);
+        bpReward = null;
         BeatNetSounds.Play(BeatNetSound.Confirm);
         search.DeactivateInputField();
         events.SetSelectedGameObject(null);
         CancelWork();
         audioPreview.Stop();
-        ArcadeSelection.SaveLibrary(value);
-        tabs.Switch(value, () =>
+        pageFrames.Clear();
+        detailFrames.Clear();
+        drawingPage = drawingDetails = false;
+        filters.Hide();
+        ratings.Show(null, library);
+        exploreScores.Dispose();
+        var movingRight = index > TabIndex;
+        tabs.Switch(movingRight, () =>
         {
-            library = value;
-            focusId = value ? ArcadeSelection.LibrarySong : string.Empty;
+            bpBoard.Hide();
+            leaderboard = index == 0;
+            library = index == 2;
+            beatmaps.SetActive(!leaderboard);
+            if (leaderboard)
+            {
+                bpBoard.Show();
+                RefreshControls();
+                events.SetSelectedGameObject(controller ? leaderboardTab.gameObject : null);
+                return;
+            }
+            ArcadeSelection.SaveLibrary(library);
+            focusId = library ? ArcadeSelection.LibrarySong : string.Empty;
             query = search.text.Trim();
             LoadPage(0);
         });
@@ -929,6 +1018,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void LoadPage(int offset)
     {
+        if (leaderboard) { return; }
         ResetCovers();
         pageFrames.Clear();
         detailFrames.Clear();
@@ -1233,6 +1323,9 @@ public sealed class BeatNetPanel : MonoBehaviour
             ? libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.Difficulties ?? beatmap.Difficulties
             : beatmap.Difficulties;
         var choices = library ? PlayableSongs() : Array.Empty<ArcadeSongDatabase.BeatmapItem>();
+        difficulties = difficulties.OrderByDescending(slot => choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == slot)?.Beatmap.metadata.tagData.Level
+                ?? (beatmap.Levels.TryGetValue(slot, out var level) ? level : 0))
+            .ThenByDescending(slot => Array.IndexOf(ArcadeSongDatabase.Instance.BeatmapIndex.Difficulties, slot)).ToArray();
         for (var index = 0; index < difficultyNames.Count; index++)
         {
             var slot = index < difficulties.Length ? difficulties[index] : string.Empty;
@@ -1304,6 +1397,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void PollRevisions()
     {
+        if (leaderboard) { return; }
         var version = Plugin.Accounts?.RevisionVersion ?? 0;
         var metadata = Plugin.Downloads?.RevisionVersion ?? 0;
         if (revisionVersion == version && metadataVersion == metadata) { return; }
@@ -1330,14 +1424,34 @@ public sealed class BeatNetPanel : MonoBehaviour
             audioPreview.Stop();
             return;
         }
-        if (library || installing || pending != null || selected?.Preview == null || client == null)
+        if (installing || pending != null || selected == null)
         {
             return;
         }
         try
         {
             status.text = string.Empty;
-            audioPreview.Play(client.PreviewUrl(selected));
+            if (library)
+            {
+                var choices = PlayableSongs();
+                var song = choices.FirstOrDefault(item => item.BeatmapInfo.difficulty == playDifficulty) ?? choices.FirstOrDefault();
+                if (song == null || string.IsNullOrEmpty(song.Song.CustomAudioFile))
+                {
+                    status.text = "Cannot play preview / local audio is missing";
+                    return;
+                }
+                var audioPath = Path.GetFullPath(Path.Combine(song.Song.CustomPath, song.Song.CustomAudioFile));
+                if (!File.Exists(audioPath))
+                {
+                    status.text = "Cannot play preview / local audio is missing";
+                    return;
+                }
+                audioPreview.Play(new Uri(audioPath), song.Beatmap.general.previewTime);
+            }
+            else if (selected.Preview != null && client != null)
+            {
+                audioPreview.Play(client.PreviewUrl(selected));
+            }
         }
         catch (Exception error)
         {
@@ -1347,7 +1461,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void Install()
     {
-        if (selected == null || pending != null || client == null)
+        if (Plugin.Accounts?.User == null || selected == null || pending != null || client == null)
         {
             return;
         }
@@ -1367,6 +1481,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         {
             return;
         }
+        audioPreview.Stop();
         var beatmap = selected;
         installing = removing = true;
         CustomSongLoader.SelectAfterRemoval(libraryEntries.FirstOrDefault(item => item.Id == beatmap.Id)?.LocalPath ?? beatmap.LocalPath);
@@ -1415,7 +1530,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void Play()
     {
-        if (!library || selected == null || installing || pending != null)
+        if (Plugin.Accounts?.User == null || !library || selected == null || installing || pending != null)
         {
             return;
         }
@@ -1453,6 +1568,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void StartSong(ArcadeSongDatabase.BeatmapItem song)
     {
+        if (Plugin.Accounts?.User == null) { return; }
         try
         {
             RestoreInput(true);
@@ -1522,11 +1638,16 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void RefreshControls()
     {
+        loggedIn = Plugin.Accounts?.User != null;
         foreach (var control in controls)
         {
             control.interactable = !installing;
         }
-        controls[controls.Count - 1].interactable = true;
+        accountPanel.Manage.interactable = true;
+        ui.Style(leaderboardTab, leaderboard);
+        ui.Style(exploreTab, !leaderboard && !library);
+        ui.Style(libraryTab, !leaderboard && library);
+        if (leaderboard) { return; }
         filters.Sort.interactable = filters.Difficulty.interactable = !installing && !drawingPage && pending == null;
         foreach (var row in rows)
         {
@@ -1550,9 +1671,9 @@ public sealed class BeatNetPanel : MonoBehaviour
         var downloads = Plugin.Downloads;
         var downloading = selected != null && downloads?.Active?.Id == selected.Id;
         var queued = selected == null ? 0 : downloads?.Position(selected.Id) ?? 0;
-        installLabel.text = downloading ? downloads!.Progress : queued > 0 ? $"Queued / {queued}" : update ? "Update" : installed ? "Installed" : selected == null ? "Choose a beatmap" : "Download";
+        installLabel.text = !loggedIn ? "Log in to download" : downloading ? downloads!.Progress : queued > 0 ? $"Queued / {queued}" : update ? "Update" : installed ? "Installed" : selected == null ? "Choose a beatmap" : "Download";
         install.gameObject.SetActive(!library || update);
-        install.interactable = selected != null && pending == null && !drawingDetails && !installing && (!installed || update)
+        install.interactable = loggedIn && selected != null && pending == null && !drawingDetails && !installing && (!installed || update)
             && downloads?.Contains(selected.Id) != true;
         downloadFill.gameObject.SetActive(downloading);
         if (downloading)
@@ -1561,8 +1682,13 @@ public sealed class BeatNetPanel : MonoBehaviour
             downloadFill.rectTransform.sizeDelta = new Vector2(TextWidth * Mathf.Clamp01(downloads.Fraction), 60f);
         }
         play.gameObject.SetActive(library && !update);
+        play.GetComponentInChildren<TextMeshProUGUI>(true).text = loggedIn ? "Play" : "Log in to play";
         ((RectTransform)play.transform).anchoredPosition = new Vector2(TextLeft, -766f);
-        uninstall.gameObject.SetActive(library && installed);
+        uninstall.gameObject.SetActive(library && installed && installer.InstalledFolder(selected!) != null);
+        var actionWidth = (TextWidth - 16f) / 2f;
+        var uninstallRect = (RectTransform)uninstall.transform;
+        uninstallRect.sizeDelta = new Vector2(actionWidth, 30f);
+        uninstall.GetComponentInChildren<TextMeshProUGUI>(true).rectTransform.sizeDelta = new Vector2(actionWidth - 32f, 30f);
         difficulty.gameObject.SetActive(library && installed);
         uninstall.interactable = installed && !drawingDetails && !installing && pending == null && !(downloads?.Count > 0);
         var choices = library && installed ? PlayableSongs() : Array.Empty<ArcadeSongDatabase.BeatmapItem>();
@@ -1576,8 +1702,8 @@ public sealed class BeatNetPanel : MonoBehaviour
         difficulty.GetComponentInChildren<TextMeshProUGUI>(true).text = currentSong == null ? "No playable difficulty" : BeatNetScoreText.Difficulty(currentSong.Beatmap.metadata.GetDifficulty(playDifficulty));
         if (library)
         {
-            SetScoreVisible(currentSong != null);
-            if (currentSong != null)
+            SetScoreVisible(loggedIn && currentSong != null);
+            if (loggedIn && currentSong != null)
             {
                 var scores = FileStorage.highscores?.GetAllScores(currentSong.Path) ?? currentSong.Highscore;
                 scores.TryGetValue(HighScoreList.GetModifiersLeaderboard(StorableBeatmapOptions.GetModifierMask()), out var record);
@@ -1586,9 +1712,15 @@ public sealed class BeatNetPanel : MonoBehaviour
             }
         }
         RefreshExploreScore();
-        preview.gameObject.SetActive(!library);
-        preview.interactable = !library && selected?.Preview != null && !drawingDetails && !installing && pending == null && client != null;
-        play.interactable = installed && !update && !drawingDetails && !installing && pending == null && choices.Length > 0
+        preview.gameObject.SetActive(!library || installed);
+        ui.Style(preview, primary: !library, inverted: library);
+        var previewRect = (RectTransform)preview.transform;
+        previewRect.anchoredPosition = new Vector2(library ? TextLeft + actionWidth + 16f : TextLeft, library ? -842f : -738f);
+        previewRect.sizeDelta = new Vector2(library ? actionWidth : TextWidth, library ? 30f : 48f);
+        preview.GetComponentInChildren<TextMeshProUGUI>(true).rectTransform.sizeDelta = new Vector2(previewRect.sizeDelta.x - 32f, previewRect.sizeDelta.y);
+        preview.interactable = (library ? choices.Any(item => !string.IsNullOrEmpty(item.Song.CustomAudioFile)) : selected?.Preview != null && client != null)
+            && !drawingDetails && !installing && pending == null;
+        play.interactable = loggedIn && installed && !update && !drawingDetails && !installing && pending == null && choices.Length > 0
             && downloads?.Contains(selected!.Id) != true;
         supported.gameObject.SetActive(true);
         supportedHeading.gameObject.SetActive(true);
@@ -1601,7 +1733,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         updateLabel.alignment = TextAlignmentOptions.Right;
         ratings.Refresh(library, installing || drawingPage || drawingDetails || pending != null);
         var focused = events.currentSelectedGameObject?.GetComponent<Selectable>();
-        if (controller && !closing && !tabs.IsMoving && !difficultyPopup.activeSelf && !filters.IsOpen && !keyboard.IsOpen
+        if (controller && !closing && !tabs.IsMoving && !difficultyPopup.activeSelf && !accountPanel.IsOpen && !filters.IsOpen && !keyboard.IsOpen
             && (focused == null || !focused.gameObject.activeInHierarchy || !focused.interactable || focused == exploreTab || focused == libraryTab))
         {
             var target = update && install.interactable ? install : play.gameObject.activeInHierarchy && play.interactable ? play
@@ -1617,7 +1749,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             entry.Rating = beatmap.Rating;
             entry.RatingCount = beatmap.RatingCount;
         }
-        if (library && filters.Sorting == "rating")
+        if (library && (filters.Sorting == "rating" || filters.Sorting == "rating_low"))
         {
             focusId = beatmap.Id;
             LoadPage(page.Offset);
@@ -1788,6 +1920,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void PollDownloads()
     {
+        if (leaderboard) { return; }
         var downloads = Plugin.Downloads;
         if (downloads == null || !IsOpen || closing)
         {
@@ -1828,11 +1961,23 @@ public sealed class BeatNetPanel : MonoBehaviour
     private void Update()
     {
         backgroundPerspective?.Tick();
-        windowPerspective.Set(difficultyPopup.activeSelf || accountPanel.IsOpen || filters.IsOpen ? 0.8f : 1.4f);
+        var depth = difficultyPopup.activeSelf || accountPanel.IsOpen || filters.IsOpen || keyboard.IsOpen ? 0.5f : PanelDepth;
+        windowPerspective.Set(depth);
         windowPerspective.Tick();
+        foreach (var layer in depthLayers)
+        {
+            layer.Perspective.Set(depth * layer.Offset);
+            layer.Perspective.Tick();
+        }
         difficultyPerspective.Tick();
         ui.RefreshTheme();
         accountPanel.Tick();
+        if (loggedIn != (Plugin.Accounts?.User != null)) { RefreshControls(); }
+        if (scoreVersion != (Plugin.Accounts?.ScoreVersion ?? 0))
+        {
+            scoreVersion = Plugin.Accounts?.ScoreVersion ?? 0;
+            RefreshControls();
+        }
         filters.Tick();
         ratings.Tick();
         if (ratingError != ratings.Error)
@@ -1841,6 +1986,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             ratingError = ratings.Error;
         }
         rhythm.Tick();
+        if (!tabs.IsMoving) { bpBoard.Tick(); }
         PollWork();
         PollRevisions();
         PollDownloads();
@@ -1865,7 +2011,30 @@ public sealed class BeatNetPanel : MonoBehaviour
             RefreshControls();
         }
         audioPreview.Tick();
-        RefreshExploreScore();
+        if (bpReward != null)
+        {
+            if (Plugin.Accounts?.BpReward != bpReward) { bpReward = null; }
+            else if (library && !closing && motion.IsReady && !tabs.IsMoving && pending == null && !drawingPage && !drawingDetails)
+            {
+                if (selected?.Id == bpReward.Project)
+                {
+                    playDifficulty = bpReward.Difficulty;
+                    RefreshControls();
+                    RevealRow(selectedIndex);
+                    rhythm.Reward((RectTransform)play.transform, bpReward);
+                }
+                else { Plugin.Accounts?.FinishBpReward(bpReward); }
+                bpReward = null;
+            }
+        }
+        if (loginTarget.Length > 0 && library && !closing && motion.IsReady && !tabs.IsMoving
+            && pending == null && !drawingPage && !drawingDetails && selected?.Id == loginTarget)
+        {
+            RevealRow(selectedIndex);
+            loginTarget = string.Empty;
+            accountPanel.OpenLogin();
+        }
+        if (!leaderboard) { RefreshExploreScore(); }
         preview.GetComponentInChildren<TextMeshProUGUI>(true).text = audioPreview.IsLoading ? "Cancel preview" : audioPreview.IsActive ? "Stop preview" : "Preview";
         if (audioPreview.Error.Length > 0)
         {
@@ -1970,19 +2139,20 @@ public sealed class BeatNetPanel : MonoBehaviour
                 }
                 if (scrolling && !IsTyping && !difficultyPopup.activeSelf && !filters.IsOpen)
                 {
-                    list.OnScroll(new PointerEventData(events)
+                    var scroll = leaderboard ? bpBoard.List : list;
+                    scroll.OnScroll(new PointerEventData(events)
                     {
-                        scrollDelta = new Vector2(0f, scrollAxis * Time.unscaledDeltaTime * 480f / list.scrollSensitivity),
+                        scrollDelta = new Vector2(0f, scrollAxis * Time.unscaledDeltaTime * 480f / scroll.scrollSensitivity),
                     });
                 }
                 submit |= pad.a.justPressed;
                 if (pad.leftBumper.justPressed && !difficultyPopup.activeSelf && !filters.IsOpen && !IsTyping)
                 {
-                    SetLibrary(false);
+                    SetTab(Math.Max(0, TabIndex - 1));
                 }
                 if (pad.rightBumper.justPressed && !difficultyPopup.activeSelf && !filters.IsOpen && !IsTyping)
                 {
-                    SetLibrary(true);
+                    SetTab(Math.Min(2, TabIndex + 1));
                 }
             }
         }
@@ -2118,6 +2288,11 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void Navigate(Vector2Int direction, int step = 0)
     {
+        if (leaderboard)
+        {
+            bpBoard.Navigate(direction, step, new Selectable[] { leaderboardTab, exploreTab, libraryTab, accountPanel.Manage, close });
+            return;
+        }
         if (filters.IsOpen) { filters.Navigate(direction, step); return; }
         if (step == 0 && direction.x != 0 && events.currentSelectedGameObject == ratings.Slider.gameObject)
         {
@@ -2169,7 +2344,7 @@ public sealed class BeatNetPanel : MonoBehaviour
                 var rect = (RectTransform)control.transform;
                 var center = window.InverseTransformPoint(rect.TransformPoint(rect.rect.center));
                 points.Add(new NavigationPoint(center.x, center.y, control.gameObject.activeInHierarchy && control.interactable
-                    && (!controller || control != exploreTab && control != libraryTab)));
+                    && (!controller || control != exploreTab && control != libraryTab && control != leaderboardTab)));
             }
             var index = step != 0 ? BeatNetNavigation.Step(points, controls.IndexOf(current!), step)
                 : BeatNetNavigation.Find(points, controls.IndexOf(current!), direction.x, direction.y);
@@ -2215,6 +2390,7 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void OnDisable()
     {
+        bpBoard?.Hide();
         if (covers != null)
         {
             ResetCovers();
@@ -2242,6 +2418,8 @@ public sealed class BeatNetPanel : MonoBehaviour
 
     private void OnDestroy()
     {
+        bpBoard?.Dispose();
+        rhythm?.Dispose();
         exploreScores?.Dispose();
         covers?.Dispose();
         firstCancellation.Cancel();

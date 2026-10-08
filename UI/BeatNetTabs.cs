@@ -11,15 +11,17 @@ public sealed class BeatNetTabs : MonoBehaviour
     private Action? change;
     private float elapsed;
     private float direction;
+    private float distance = 1720f;
     private bool entering;
 
     internal bool IsMoving { get; private set; }
 
-    internal static BeatNetTabs Create(RectTransform root)
+    internal static BeatNetTabs Create(RectTransform root, float distance = 1720f)
     {
         var tabs = root.gameObject.AddComponent<BeatNetTabs>();
         tabs.target = root;
         tabs.origin = root.anchoredPosition;
+        tabs.distance = distance;
         tabs.group = root.gameObject.AddComponent<CanvasGroup>();
         return tabs;
     }
@@ -52,7 +54,7 @@ public sealed class BeatNetTabs : MonoBehaviour
         elapsed += Time.unscaledDeltaTime;
         var time = Mathf.Clamp01(elapsed / (entering ? 0.24f : 0.18f));
         var eased = entering ? 1f - Mathf.Pow(1f - time, 3f) : time * time;
-        target.anchoredPosition = origin + new Vector2(direction * 1720f * (entering ? eased - 1f : eased), 0f);
+        target.anchoredPosition = origin + new Vector2(direction * distance * (entering ? eased - 1f : eased), 0f);
         group.alpha = entering ? eased : Mathf.Pow(1f - time, 3f);
         if (time < 1f)
         {
@@ -65,7 +67,7 @@ public sealed class BeatNetTabs : MonoBehaviour
         }
         entering = true;
         elapsed = 0f;
-        target.anchoredPosition = origin - new Vector2(direction * 1720f, 0f);
+        target.anchoredPosition = origin - new Vector2(direction * distance, 0f);
         var changed = change;
         change = null;
         changed?.Invoke();

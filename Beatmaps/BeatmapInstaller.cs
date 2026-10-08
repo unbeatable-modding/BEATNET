@@ -53,37 +53,36 @@ internal sealed class BeatmapInstaller
         return Task.Run(() => InstallFiles(client, beatmap, progress, token, downloadProgress), token);
     }
 
+    internal string LibraryId(string folder)
+    {
+        var path = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var prefix = songs + Path.DirectorySeparatorChar;
+        if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var id = path.Substring(prefix.Length).Split(Path.DirectorySeparatorChar)[0];
+            if (InstalledRevision(id) != null) { return id; }
+        }
+        return string.Empty;
+    }
+
     internal string? InstalledFolder(BeatmapEntry beatmap)
     {
         if (BeatNetClient.IsId(beatmap.Id))
         {
             return InstalledRevision(beatmap.Id) == null ? null : Path.Combine(songs, beatmap.Id);
         }
-        if (beatmap.LocalPath.Length == 0)
-        {
-            return null;
-        }
-        var folder = Path.GetFullPath(beatmap.LocalPath);
-        var prefix = songs + Path.DirectorySeparatorChar;
-        if (!folder.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(folder)
-            || beatmap.Id != "local:" + Path.GetRelativePath(customSongs, folder))
-        {
-            return null;
-        }
-        CheckParents(folder);
-        return folder;
+        return null;
     }
 
     internal List<BeatmapEntry> Library()
     {
         var result = new List<BeatmapEntry>();
-        if (!Directory.Exists(songs))
+        if (!Directory.Exists(customSongs))
         {
             return result;
         }
-        CheckParents(songs);
-        var managed = new List<string>();
-        foreach (var folder in Directory.EnumerateDirectories(songs))
+        CheckParents(customSongs);
+        foreach (var folder in Directory.Exists(songs) ? Directory.EnumerateDirectories(songs) : Array.Empty<string>())
         {
             try
             {
@@ -101,31 +100,8 @@ internal sealed class BeatmapInstaller
                 };
                 ReadMetadata(entry, folder);
                 result.Add(entry);
-                managed.Add(folder);
             }
             catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException || error is JsonException)
-            {
-                CustomSongLoader.Logger?.LogWarning($"skipped library map {Path.GetFileName(folder)} / {error.Message}");
-            }
-        }
-        foreach (var folder in new[] { songs }.Concat(ChartFiles.GetSongFolders(songs)))
-        {
-            if (managed.Any(root => folder.Equals(root, StringComparison.OrdinalIgnoreCase)
-                || folder.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
-            {
-                continue;
-            }
-            try
-            {
-                if (ChartFiles.GetCharts(folder).Count == 0)
-                {
-                    continue;
-                }
-                var entry = new BeatmapEntry { Id = "local:" + Path.GetRelativePath(customSongs, folder), LocalPath = folder };
-                ReadMetadata(entry, folder);
-                result.Add(entry);
-            }
-            catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException)
             {
                 CustomSongLoader.Logger?.LogWarning($"skipped library map {Path.GetFileName(folder)} / {error.Message}");
             }

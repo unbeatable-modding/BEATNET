@@ -81,8 +81,10 @@ internal sealed class BeatNetLeaderboard : LeaderboardProviderBase
         var board = accounts?.Board(songPath);
         if (board == null) { native.GetScore(songPath, userId, region, callback, errorCallback); return; }
         if (accounts!.User == null) { errorCallback?.Invoke(LeaderboardError.NoEntries, "Log in to see your BEATNET score"); return; }
+        var owner = accounts.UserId;
+        var key = accounts.Key;
         board["action"] = "leaderboard";
-        board["key"] = accounts.Key;
+        board["key"] = key;
         board["limit"] = 1;
         board["region"] = ResolveRegion(region);
         accounts.SyncProfile();
@@ -94,6 +96,7 @@ internal sealed class BeatNetLeaderboard : LeaderboardProviderBase
                 var result = await accounts.Request(board).ConfigureAwait(false);
                 accounts.Post(() =>
                 {
+                    if (accounts.UserId != owner || accounts.Key != key) { callback(null); return; }
                     if (result["own"] is JObject own) { callback(ConvertScore(own, songPath)); }
                     else { errorCallback?.Invoke(LeaderboardError.NoEntries, "No BEATNET score yet"); }
                 });

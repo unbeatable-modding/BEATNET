@@ -128,7 +128,7 @@ internal sealed class BeatNetDownloads : IDisposable
 
     internal bool Add(BeatmapEntry entry)
     {
-        if (cancellation.IsCancellationRequested || !ids.Add(entry.Id))
+        if (Plugin.Accounts?.User == null || cancellation.IsCancellationRequested || !ids.Add(entry.Id))
         {
             return false;
         }
@@ -165,7 +165,7 @@ internal sealed class BeatNetDownloads : IDisposable
             Active = null;
             Version++;
         }
-        if (pending != null || queue.Count == 0 || cancellation.IsCancellationRequested)
+        if (Plugin.Accounts?.User == null || pending != null || queue.Count == 0 || cancellation.IsCancellationRequested)
         {
             return;
         }

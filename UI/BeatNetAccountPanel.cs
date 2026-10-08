@@ -15,6 +15,7 @@ internal sealed class BeatNetAccountPanel
     private readonly RectTransform dialog;
     private readonly BeatNetMotion motion;
     private readonly BeatNetPerspective perspective;
+    private readonly BeatNetTabs tabs;
     private readonly EventSystem events;
     private readonly TextMeshProUGUI state;
     private readonly TextMeshProUGUI message;
@@ -35,8 +36,9 @@ internal sealed class BeatNetAccountPanel
     private string validation = string.Empty;
 
     internal Button Manage { get; }
+    internal TextMeshProUGUI State => state;
     internal bool IsOpen => root.activeSelf;
-    internal bool IsReady => motion.IsReady && (keyboard == null || !keyboard.IsOpen || keyboard.IsReady);
+    internal bool IsReady => motion.IsReady && !tabs.IsMoving && (keyboard == null || !keyboard.IsOpen || keyboard.IsReady);
     internal bool IsTyping => username.isFocused || password.isFocused || confirmation.isFocused || keyboard?.IsOpen == true;
 
     internal BeatNetAccountPanel(BeatNetUi ui, Transform parent, Transform window, EventSystem events)
@@ -69,6 +71,7 @@ internal sealed class BeatNetAccountPanel
         perspective.Set(3.4f);
         var image = dialog.gameObject.AddComponent<Image>();
         ui.Tint(image, BeatNetColor.Background);
+        dialog.gameObject.AddComponent<RectMask2D>();
         var surface = dialog.gameObject.AddComponent<Button>();
         surface.targetGraphic = image;
         surface.transition = Selectable.Transition.None;
@@ -77,28 +80,30 @@ internal sealed class BeatNetAccountPanel
         ui.Text(dialog, "Manage account", 34f, 30f, 20f, 510f, 60f, BeatNetColor.Text, BeatNetFont.Heading);
         loginTab = ui.Button(dialog, "Log in", 30f, 92f, 247f, 48f, true);
         createTab = ui.Button(dialog, "Create account", 293f, 92f, 247f, 48f);
-        loginTab.onClick.AddListener(() => SetMode(false));
-        createTab.onClick.AddListener(() => SetMode(true));
-        ui.Text(dialog, "Username / up to 32 characters", 18f, 30f, 158f, 510f, 30f);
-        username = ui.Search(dialog, 30f, 192f, 510f, 48f);
+        loginTab.onClick.AddListener(() => SwitchMode(false));
+        createTab.onClick.AddListener(() => SwitchMode(true));
+        var form = ui.Rect(dialog, "Account form", 0f, 0f, 570f, 650f);
+        tabs = BeatNetTabs.Create(form, 586f);
+        ui.Text(form, "Username / up to 32 characters", 18f, 30f, 158f, 510f, 30f);
+        username = ui.Search(form, 30f, 192f, 510f, 48f);
         username.characterLimit = 64;
         ((TextMeshProUGUI)username.placeholder).text = "Username";
         username.textComponent.richText = false;
-        ui.Text(dialog, "Password / 8 to 256 characters", 18f, 30f, 252f, 510f, 30f);
-        password = ui.Search(dialog, 30f, 286f, 510f, 48f);
+        ui.Text(form, "Password / 8 to 256 characters", 18f, 30f, 252f, 510f, 30f);
+        password = ui.Search(form, 30f, 286f, 510f, 48f);
         password.contentType = TMP_InputField.ContentType.Password;
         password.characterLimit = 256;
         ((TextMeshProUGUI)password.placeholder).text = "Password";
-        confirmLabel = ui.Text(dialog, "Confirm password", 18f, 30f, 346f, 510f, 30f);
-        confirmation = ui.Search(dialog, 30f, 380f, 510f, 48f);
+        confirmLabel = ui.Text(form, "Confirm password", 18f, 30f, 346f, 510f, 30f);
+        confirmation = ui.Search(form, 30f, 380f, 510f, 48f);
         confirmation.contentType = TMP_InputField.ContentType.Password;
         confirmation.characterLimit = 256;
         ((TextMeshProUGUI)confirmation.placeholder).text = "Confirm password";
-        message = ui.Text(dialog, "", 18f, 30f, 440f, 510f, 72f, BeatNetColor.Muted);
+        message = ui.Text(form, "", 18f, 30f, 440f, 510f, 72f, BeatNetColor.Muted);
         message.textWrappingMode = TextWrappingModes.Normal;
         message.richText = false;
-        submit = ui.Button(dialog, "Log in", 30f, 526f, 247f, 48f, true);
-        logout = ui.Button(dialog, "Log out", 293f, 526f, 247f, 48f);
+        submit = ui.Button(form, "Log in", 30f, 526f, 247f, 48f, true);
+        logout = ui.Button(form, "Log out", 293f, 526f, 247f, 48f);
         back = ui.Button(dialog, "Back", 30f, 592f, 510f, 40f, true);
         ((BeatNetControl)back).Sound = BeatNetSound.None;
         submit.onClick.AddListener(Submit);
@@ -115,6 +120,16 @@ internal sealed class BeatNetAccountPanel
         }
         SetMode(false);
         root.SetActive(false);
+    }
+
+    private void SwitchMode(bool create)
+    {
+        if (tabs.IsMoving || register == create || Plugin.Accounts?.Busy == true) { return; }
+        username.DeactivateInputField();
+        password.DeactivateInputField();
+        confirmation.DeactivateInputField();
+        events.SetSelectedGameObject(null);
+        tabs.Switch(create, () => SetMode(create));
     }
 
     private void SetMode(bool create)
@@ -147,15 +162,23 @@ internal sealed class BeatNetAccountPanel
     private void Open()
     {
         validation = string.Empty;
+        tabs.Reset();
         SetMode(false);
         motion.Show();
         events.SetSelectedGameObject(null);
+    }
+
+    internal void OpenLogin()
+    {
+        Open();
+        validation = "Log in to play custom beatmaps";
     }
 
     internal void Close()
     {
         if (keyboard?.IsOpen == true) { keyboard.Close(); return; }
         if (!IsOpen || motion.IsHiding) { return; }
+        tabs.Reset();
         BeatNetSounds.Play(BeatNetSound.Back);
         username.DeactivateInputField();
         password.DeactivateInputField();
@@ -169,6 +192,7 @@ internal sealed class BeatNetAccountPanel
 
     internal void Hide()
     {
+        tabs.Reset();
         foreach (var item in keyboards.Values) { item.Hide(); }
         keyboard = null;
         username.DeactivateInputField();
@@ -180,6 +204,7 @@ internal sealed class BeatNetAccountPanel
 
     private void Submit()
     {
+        if (!IsReady || Plugin.Accounts?.Busy == true) { return; }
         validation = string.Empty;
         if (register && password.text != confirmation.text) { validation = "Passwords do not match"; return; }
         Plugin.Accounts?.Login(username.text, password.text, register);
@@ -195,14 +220,15 @@ internal sealed class BeatNetAccountPanel
         perspective.Tick();
         message.text = validation.Length > 0 ? validation : accounts?.Error.Length > 0 ? accounts.Error
             : accounts?.Busy == true ? "Connecting account" : accounts?.User != null ? accounts.State : string.Empty;
-        submit.interactable = accounts != null && !accounts.Busy;
-        logout.interactable = accounts?.User != null && !accounts.Busy;
-        loginTab.interactable = createTab.interactable = accounts?.Busy != true;
-        username.interactable = password.interactable = confirmation.interactable = accounts?.Busy != true;
+        submit.interactable = !tabs.IsMoving && accounts != null && !accounts.Busy;
+        logout.interactable = !tabs.IsMoving && accounts?.User != null && !accounts.Busy;
+        loginTab.interactable = createTab.interactable = !tabs.IsMoving && accounts?.Busy != true;
+        username.interactable = password.interactable = confirmation.interactable = !tabs.IsMoving && accounts?.Busy != true;
     }
 
     internal void Navigate(Vector2Int direction, int step, bool controller = false)
     {
+        if (!IsReady) { return; }
         if (keyboard?.IsOpen == true) { keyboard.Navigate(direction, step); return; }
         if (IsTyping && step == 0 && !controller) { return; }
         var choices = controls.Where(c => c.gameObject.activeInHierarchy && c.interactable).ToList();
@@ -225,6 +251,7 @@ internal sealed class BeatNetAccountPanel
 
     internal void Activate(bool controller)
     {
+        if (!IsReady) { return; }
         var selected = events.currentSelectedGameObject?.GetComponent<Selectable>();
         if (selected is Button button && button.interactable) { button.OnSubmit(new BaseEventData(events)); }
         else if (selected is TMP_InputField field && field.interactable)

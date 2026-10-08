@@ -16,11 +16,13 @@ internal sealed class BeatNetPerspective
     private float target = 1f;
     private float velocity;
 
-    internal BeatNetPerspective(CanvasMousePerspective source)
+    internal BeatNetPerspective(CanvasMousePerspective source, float strength = 1f)
     {
         this.source = source;
         intensity = (float)Intensity.GetValue(source);
         smoothing = (float)Smoothing.GetValue(source);
+        this.strength = target = strength;
+        Intensity.SetValue(source, intensity * strength);
     }
 
     internal void Set(float value, float delay = 1f)

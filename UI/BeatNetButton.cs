@@ -241,11 +241,19 @@ public sealed class BeatNetButton : MonoBehaviour
         }
     }
 
-    internal bool OpenUpdate(string id)
+    internal bool OpenUpdate(string id, bool login = false)
     {
         if (!IsMainSongSelect || panel == null) { return false; }
         panel.RestoreInput();
-        return panel.ShowLibrary(id);
+        return panel.ShowLibrary(id, login);
+    }
+
+    internal void OpenBpReward()
+    {
+        var reward = Plugin.Accounts?.BpReward;
+        if (!IsMainSongSelect || panel == null || reward == null || reward.Opened) { return; }
+        panel.RestoreInput();
+        if (panel.ShowBpReward(reward)) { reward.Opened = true; }
     }
 
     private static bool OpenKeyPressed() => UnityEngine.Input.GetKeyDown(KeyCode.Alpha2) || UnityEngine.Input.GetKeyDown(KeyCode.Keypad2);

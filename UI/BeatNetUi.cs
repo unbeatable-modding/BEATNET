@@ -2,6 +2,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
 using Arcade.UI;
 using Arcade.UI.SongSelect;
 using HarmonyLib;
@@ -570,4 +573,25 @@ internal sealed class BeatNetUi : IDisposable
             UnityEngine.Object.Destroy(material);
         }
     }
+}
+
+internal static class BeatNetNumbers
+{
+    private static readonly CultureInfo Culture = ReadCulture();
+
+    internal static string Format(double value) => value.ToString("N0", Culture);
+
+    private static CultureInfo ReadCulture()
+    {
+        try
+        {
+            var name = new StringBuilder(85);
+            if (GetUserDefaultLocaleName(name, name.Capacity) > 0) { return CultureInfo.GetCultureInfo(name.ToString()); }
+        }
+        catch (System.Exception) { }
+        return CultureInfo.CurrentCulture;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetUserDefaultLocaleName(StringBuilder name, int length);
 }

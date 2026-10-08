@@ -17,15 +17,20 @@ internal sealed class BeatNetPreview : IDisposable
     private bool pausedMusic;
     private bool wasPaused;
     private float deadline;
+    private bool local;
+    private float previewStart;
+    private uint previewEnd;
     internal bool IsActive => sound.hasHandle();
     internal bool IsLoading => starting;
     internal string Error { get; private set; } = string.Empty;
 
-    internal void Play(Uri url)
+    internal void Play(Uri url, float start = 0f)
     {
         Stop();
         Error = string.Empty;
-        var result = RuntimeManager.CoreSystem.createStream(url.AbsoluteUri, MODE.NONBLOCKING | MODE._2D, out sound);
+        local = url.IsFile;
+        previewStart = start;
+        var result = RuntimeManager.CoreSystem.createStream(local ? url.LocalPath : url.AbsoluteUri, MODE.NONBLOCKING | MODE._2D, out sound);
         if (result != RESULT.OK)
         {
             Fail(result, "open");
@@ -66,6 +71,24 @@ internal sealed class BeatNetPreview : IDisposable
                 Fail(result, "play");
                 return;
             }
+            if (local)
+            {
+                result = sound.getLength(out var length, TIMEUNIT.MS);
+                if (result != RESULT.OK)
+                {
+                    Fail(result, "duration");
+                    return;
+                }
+                var offset = !float.IsNaN(previewStart) && !float.IsInfinity(previewStart)
+                    && previewStart > 0f && previewStart < length / 1000f ? (uint)(previewStart * 1000f) : (uint)(length * 0.15f);
+                previewEnd = offset + Math.Min(30000u, length - offset);
+                result = channel.setPosition(offset, TIMEUNIT.MS);
+                if (result != RESULT.OK)
+                {
+                    Fail(result, "seek");
+                    return;
+                }
+            }
             wasPaused = ArcadeBGMManager.Paused;
             pausedMusic = ArcadeBGMManager.Instance != null;
             ArcadeBGMManager.Instance?.PauseSongPreview(true);
@@ -77,7 +100,8 @@ internal sealed class BeatNetPreview : IDisposable
             }
             starting = false;
         }
-        else if (channel.isPlaying(out var playing) != RESULT.OK || !playing)
+        else if (channel.isPlaying(out var playing) != RESULT.OK || !playing
+            || local && channel.getPosition(out var position, TIMEUNIT.MS) == RESULT.OK && position >= previewEnd)
         {
             Stop();
         }
@@ -102,7 +126,7 @@ internal sealed class BeatNetPreview : IDisposable
         {
             var released = sound;
             sound.clearHandle();
-            if (starting)
+            if (starting && !local)
             {
                 _ = Task.Run(() => released.release());
             }
@@ -117,6 +141,8 @@ internal sealed class BeatNetPreview : IDisposable
             busHeld = false;
         }
         starting = false;
+        local = false;
+        previewEnd = 0;
         if (pausedMusic)
         {
             ArcadeBGMManager.Instance?.PauseSongPreview(wasPaused);
