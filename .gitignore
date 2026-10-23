@@ -1,4 +1,14 @@
-/bin/
-/obj/
+
 /tests/bin/
 /tests/obj/
+
+.vs/
+*.sln
+
+# Build results
+
+[Dd]ebug/
+[Rr]elease/
+x64/
+[Bb]in/
+[Oo]bj/
