@@ -207,7 +207,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         panel.pointerModule = root.AddComponent<BeatNetInputModule>();
         panel.pointerInput = root.AddComponent<BeatNetInput>();
         panel.pointerModule.inputOverride = panel.pointerInput;
-        panel.clientReady = Task.Run(() => new BeatNetClient("http://92.5.175.72"));
+        panel.clientReady = Task.Run(() => new BeatNetClient());
         var firstToken = panel.firstCancellation.Token;
         panel.firstPage = Task.Run(async () =>
         {

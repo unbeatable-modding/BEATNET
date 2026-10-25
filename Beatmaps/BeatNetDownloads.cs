@@ -14,7 +14,7 @@ internal sealed class BeatNetDownloads : IDisposable
     private readonly CancellationTokenSource cancellation = new();
     private CancellationTokenSource checks = new();
     private bool playing;
-    private readonly BeatNetClient client = new("http://92.5.175.72");
+    private readonly BeatNetClient client = new();
     private readonly BeatmapInstaller installer;
     private Task<(List<BeatmapEntry> Entries, BeatmapEntry Beatmap)>? pending;
     private Action<BeatmapEntry>? completedDownload;

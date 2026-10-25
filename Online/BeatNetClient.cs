@@ -15,11 +15,12 @@ namespace BEATNET;
 
 internal sealed class BeatNetClient : IDisposable
 {
+    internal const string Address = "https://api.beatnet.net";
     private readonly Uri server;
     private readonly HttpClient http;
     private static readonly JsonSerializerSettings JsonSettings = new() { MaxDepth = 16 };
 
-    internal BeatNetClient(string address, HttpMessageHandler? handler = null)
+    internal BeatNetClient(string address = Address, HttpMessageHandler? handler = null)
     {
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri)
             || (uri.Scheme != "http" && uri.Scheme != "https") || uri.AbsolutePath != "/"

@@ -40,10 +40,9 @@ internal sealed class BeatNetOnlineClient : IDisposable
     private readonly string address;
     private readonly string expectedKey;
     private JObject? publicKey;
-    private const string DefaultAddress = "http://92.5.175.72";
     private const string ServerKey = "61bad2a97d926125a644d2470d364ce64dad18b0a99c5912a61b0377e236ecd8";
 
-    internal BeatNetOnlineClient(string dataPath, string address = DefaultAddress, string? expectedKey = null)
+    internal BeatNetOnlineClient(string dataPath, string address = BeatNetClient.Address, string? expectedKey = null)
     {
         this.address = address;
         this.expectedKey = expectedKey ?? ServerKey;

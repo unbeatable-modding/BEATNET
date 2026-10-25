@@ -16,7 +16,7 @@ namespace BEATNET;
 internal sealed class BeatNetCovers : IDisposable
 {
     private readonly string cache;
-    private readonly BeatNetClient client = new("http://92.5.175.72");
+    private readonly BeatNetClient client = new();
     private readonly Dictionary<string, Texture2D?> textures = new();
     private readonly Dictionary<string, Task<byte[]?>> pending = new();
     private CancellationTokenSource cancellation = new();
