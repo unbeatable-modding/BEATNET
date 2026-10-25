@@ -15,7 +15,9 @@ internal static class BeatNetPlay
         var separator = path.IndexOf('\\');
         var songPath = separator < 0 ? path : path.Substring(0, separator);
         item ??= ArcadeSongDatabase.Instance?.GetBeatmapItemByPath(songPath);
-        if (accounts?.User == null && (board != null || songPath.StartsWith("CUSTOM_BEATNET_beatmaps/", StringComparison.Ordinal)))
+
+        //if (accounts?.User == null && (board != null || songPath.StartsWith("CUSTOM_BEATNET_beatmaps/", StringComparison.Ordinal)))
+        if (board != null || songPath.StartsWith("CUSTOM_BEATNET_beatmaps/", StringComparison.Ordinal))
         {
             var installer = new BeatmapInstaller(Application.persistentDataPath);
             var folder = item?.Song.CustomPath;

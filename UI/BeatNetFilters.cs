@@ -14,10 +14,9 @@ internal sealed class BeatNetFilters
     private static readonly (string Id, string Label, string Name)[] Orders =
     {
         ("title", "Alphabetical", "Alphabetical"),
-        ("rating", "Rating / Highest first", "Highest rating"),
-        ("rating_low", "Rating / Lowest first", "Lowest rating"),
-        ("downloads", "Most downloaded", "Most downloads"),
-        ("downloads_low", "Least downloaded", "Least downloads"),
+        ("rating", "Rating", "Rating"),
+        ("downloads", "Total downloaded", "Total downloads"),
+        ("created", "Newest Created", "Newest"),
     };
     private readonly BeatNetUi ui;
     private readonly EventSystem events;
@@ -35,6 +34,7 @@ internal sealed class BeatNetFilters
     internal Button Sort { get; }
     internal Button Difficulty { get; }
     internal string Sorting { get; private set; } = "title";
+    internal bool Descending { get; private set; }
     internal string[] Difficulties { get; private set; } = Array.Empty<string>();
     internal void ClearDifficulties()
     {
@@ -117,13 +117,21 @@ internal sealed class BeatNetFilters
         }
         else
         {
+            // Ascending/Descending Button (it's bad)
+            Add(Descending ? "Change to Descending" : "Change to Ascending", 30f, 100f, 600f, () =>
+            {
+                var desc = !Descending;
+                SetSort(Sorting, desc);
+            });
+            // Filter Buttons
             for (var index = 0; index < Orders.Length; index++)
             {
                 var order = Orders[index];
-                Add(order.Label, 30f, 100f + index * 60f, 600f, () => SetSort(order.Id));
+                Add(order.Label, 30f, 100f + (index + 1) * 60f, 600f, () => SetSort(order.Id, Descending));
             }
             ui.Style(choices[Math.Max(0, Array.FindIndex(Orders, order => order.Id == Sorting))], selected: true);
         }
+        // Back Button
         Add("Back", 30f, 406f, 600f, Close, 40f, BeatNetSound.None, primary: true);
         dialog.sizeDelta = new Vector2(660f, 466f);
         perspective.Set(3.4f);
@@ -151,9 +159,10 @@ internal sealed class BeatNetFilters
         }
     }
 
-    private void SetSort(string sorting)
+    private void SetSort(string sorting, bool descending)
     {
         Sorting = sorting;
+        Descending = descending;
         Sort.GetComponentInChildren<TextMeshProUGUI>(true).text = "Sort / " + Orders.First(order => order.Id == sorting).Name;
         Hide();
         changed();

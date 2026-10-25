@@ -22,6 +22,8 @@ internal sealed class BeatmapEntry
     public double Rating { get; set; }
     public int RatingCount { get; set; }
     public long DownloadCount { get; set; }
+    public DateTimeOffset? CreatedAt { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
     public BeatmapRevision Revision { get; set; } = new();
     public BeatmapFile[] Files { get; set; } = Array.Empty<BeatmapFile>();
     public string[] Difficulties { get; set; } = Array.Empty<string>();

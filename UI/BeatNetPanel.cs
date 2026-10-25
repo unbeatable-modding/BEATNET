@@ -1059,6 +1059,7 @@ public sealed class BeatNetPanel : MonoBehaviour
         var local = library;
         var filter = query;
         var sorting = filters.Sorting;
+        var descending = filters.Descending;
         var difficulties = filters.Difficulties.ToArray();
         var cachedRatings = libraryEntries.ToDictionary(item => item.Id, item => (item.Rating, item.RatingCount, item.DownloadCount));
         var focused = focusId;
@@ -1077,7 +1078,7 @@ public sealed class BeatNetPanel : MonoBehaviour
             var scan = Task.Run(() => installer.Library(), token);
             source = await clientReady.ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
-            var remote = local ? null : cachedPage ?? source!.List(filter, offset, PageSize, token, sorting, difficulties);
+            var remote = local ? null : cachedPage ?? source!.List(filter, offset, PageSize, token, sorting, descending, difficulties);
             if (remote != null)
             {
                 await Task.WhenAll(scan, remote).ConfigureAwait(false);
@@ -1104,7 +1105,7 @@ public sealed class BeatNetPanel : MonoBehaviour
                 }
                 catch (Exception) when (!token.IsCancellationRequested) { }
                 token.ThrowIfCancellationRequested();
-                result = BeatNetCatalog.LibraryPage(entries, filter, sorting, difficulties, offset, PageSize, focused);
+                result = BeatNetCatalog.LibraryPage(entries, filter, sorting, descending, difficulties, offset, PageSize, focused);
             }
             else
             {

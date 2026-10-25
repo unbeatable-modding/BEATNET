@@ -1,6 +1,8 @@
+using Newtonsoft.Json;
 using System;
-using System.IO;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -9,7 +11,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
 
 namespace BEATNET;
 
@@ -35,9 +36,9 @@ internal sealed class BeatNetClient : IDisposable
         http.DefaultRequestHeaders.UserAgent.ParseAdd("BEATNET/1.0.0");
     }
 
-    internal async Task<CatalogPage> List(string query, int offset, int limit, CancellationToken token, string sorting = "title", string[]? difficulties = null)
+    internal async Task<CatalogPage> List(string query, int offset, int limit, CancellationToken token, string sorting = "title", bool descending = true, string[]? difficulties = null)
     {
-        var path = $"/api/beatmaps?query={Uri.EscapeDataString(query)}&offset={offset}&limit={limit}&sorting={sorting}&difficulties={Uri.EscapeDataString(string.Join(",", difficulties ?? Array.Empty<string>()))}";
+        var path = $"/api/beatmaps?query={Uri.EscapeDataString(query)}&offset={offset}&limit={limit}&difficulties={Uri.EscapeDataString(string.Join(",", difficulties ?? Array.Empty<string>()))}";
         var page = await ReadJson<CatalogPage>(path, token).ConfigureAwait(false);
         if (page.Items == null || page.Items.Length > limit || page.Total < 0 || page.Offset != offset || page.Limit != limit)
         {
@@ -47,6 +48,38 @@ internal sealed class BeatNetClient : IDisposable
         {
             ValidateBeatmap(beatmap);
         }
+        
+        page.Items = await Task<BeatmapEntry[]>.Run(() => {
+            // Sorting
+            var matches = page.Items.Where(item => (difficulties?.Length == 0 || item.Difficulties.Any(difficulties.Contains)) && (query.Length == 0
+                || item.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || item.Artist.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || item.Creator.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0));
+
+            IOrderedEnumerable<BeatmapEntry> sorted;
+            if (descending)
+            {
+                sorted = sorting switch
+                {
+                    "rating" => matches.OrderBy(item => item.Rating),
+                    "downloads" => matches.OrderBy(item => item.DownloadCount),
+                    "created" => matches.OrderBy(item => item.CreatedAt),
+                    _ => matches.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase),
+                };
+            }
+            else
+            {
+                sorted = sorting switch
+                {
+                    "rating" => matches.OrderByDescending(item => item.Rating),
+                    "downloads" => matches.OrderByDescending(item => item.DownloadCount),
+                    "created" => matches.OrderByDescending(item => item.CreatedAt),
+                    _ => matches.OrderByDescending(item => item.Title, StringComparer.OrdinalIgnoreCase),
+                };
+            }
+            return sorted.ToArray();
+        });
+        
         return page;
     }
 
@@ -222,6 +255,42 @@ internal sealed class BeatNetClient : IDisposable
             throw new InvalidDataException("The BEATNET server is not ready");
         }
         throw new HttpRequestException($"The server returned HTTP {(int)status}");
+    }
+
+    private async Task<BeatmapEntry[]> SortList(CatalogPage page, string query, string sorting = "title", bool descending = true, string[]? difficulties = null)
+    {
+        // Sorting
+        var matches = page.Items.Where(item => (difficulties?.Length == 0 || item.Difficulties.Any(difficulties.Contains)) && (query.Length == 0
+            || item.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+            || item.Artist.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+            || item.Creator.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0));
+
+        
+        return await new Task<BeatmapEntry[]>(() => {
+            IOrderedEnumerable<BeatmapEntry> sorted;
+            if (descending)
+            {
+                sorted = sorting switch
+                {
+                    "rating" => matches.OrderBy(item => item.Rating),
+                    "downloads" => matches.OrderBy(item => item.DownloadCount),
+                    "created" => matches.OrderBy(item => item.CreatedAt),
+                    _ => matches.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase),
+                };
+            }
+            else
+            {
+                sorted = sorting switch
+                {
+                    "rating" => matches.OrderByDescending(item => item.Rating),
+                    "downloads" => matches.OrderByDescending(item => item.DownloadCount),
+                    "created" => matches.OrderByDescending(item => item.CreatedAt),
+                    _ => matches.OrderByDescending(item => item.Title, StringComparer.OrdinalIgnoreCase),
+                };
+            }
+            return sorted.ToArray();
+        });
+        
     }
 
     public void Dispose() => http.Dispose();
