@@ -13,7 +13,6 @@ internal static class BeatNetCatalog
             || item.Artist.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
             || item.Creator.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0));
 
-
         IOrderedEnumerable<BeatmapEntry> sorted;
         if (descending)
         {

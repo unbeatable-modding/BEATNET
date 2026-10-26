@@ -11,6 +11,9 @@ namespace BEATNET;
 internal sealed class BeatNetFilters
 {
     private static readonly string[] Slots = { "Beginner", "Easy", "Normal", "Hard", "UNBEATABLE", "Star" };
+    /// <param name="Orders.Id">Internal sorting Id</param>
+    /// <param name="Label">Name shown inside menus</param>
+    /// <param name="Name">Name shown outside of menus (usually shorter)</param>
     private static readonly (string Id, string Label, string Name)[] Orders =
     {
         ("title", "Alphabetical", "Alphabetical"),
