@@ -9,6 +9,7 @@ namespace BEATNET;
 
 internal sealed class BeatNetPreview : IDisposable
 {
+    private BeatNetStream? stream;
     private Sound sound;
     private Channel channel;
     internal readonly BeatNetBus Bus = new();
@@ -20,7 +21,7 @@ internal sealed class BeatNetPreview : IDisposable
     private bool local;
     private float previewStart;
     private uint previewEnd;
-    internal bool IsActive => sound.hasHandle();
+    internal bool IsActive => stream != null || sound.hasHandle();
     internal bool IsLoading => starting;
     internal string Error { get; private set; } = string.Empty;
 
@@ -30,14 +31,23 @@ internal sealed class BeatNetPreview : IDisposable
         Error = string.Empty;
         local = url.IsFile;
         previewStart = start;
-        var result = RuntimeManager.CoreSystem.createStream(local ? url.LocalPath : url.AbsoluteUri, MODE.NONBLOCKING | MODE._2D, out sound);
+        starting = true;
+        deadline = Time.unscaledTime + 30f;
+        if (!local)
+        {
+            stream = new BeatNetStream(url);
+            return;
+        }
+        Open(url.LocalPath);
+    }
+
+    private void Open(string path)
+    {
+        var result = RuntimeManager.CoreSystem.createStream(path, MODE.NONBLOCKING | MODE._2D, out sound);
         if (result != RESULT.OK)
         {
             Fail(result, "open");
-            return;
         }
-        starting = true;
-        deadline = Time.unscaledTime + 30f;
     }
 
     internal void Tick()
@@ -46,8 +56,31 @@ internal sealed class BeatNetPreview : IDisposable
         {
             return;
         }
+        if (stream != null && stream.Error != RESULT.OK)
+        {
+            Fail(stream.Error, "stream");
+            return;
+        }
         if (starting)
         {
+            if (stream != null && !sound.hasHandle())
+            {
+                if (!stream.Length.IsCompleted && Time.unscaledTime < deadline)
+                {
+                    return;
+                }
+                if (!stream.Length.IsCompletedSuccessfully)
+                {
+                    Fail(RESULT.ERR_HTTP, "stream");
+                    return;
+                }
+                var opened = stream.Open(out sound);
+                if (opened != RESULT.OK)
+                {
+                    Fail(opened, "open");
+                    return;
+                }
+            }
             var result = sound.getOpenState(out var state, out _, out _, out _);
             if (result != RESULT.OK || state == OPENSTATE.ERROR || Time.unscaledTime >= deadline)
             {
@@ -117,20 +150,36 @@ internal sealed class BeatNetPreview : IDisposable
     internal void Stop()
     {
         Error = string.Empty;
-        if (channel.hasHandle())
+        var remote = stream;
+        stream = null;
+        var stopped = channel;
+        channel.clearHandle();
+        var released = sound;
+        sound.clearHandle();
+        if (remote != null)
         {
-            channel.stop();
-            channel.clearHandle();
-        }
-        if (sound.hasHandle())
-        {
-            var released = sound;
-            sound.clearHandle();
-            if (starting && !local)
+            _ = Task.Run(() =>
             {
-                _ = Task.Run(() => released.release());
+                remote.Cancel();
+                if (stopped.hasHandle())
+                {
+                    stopped.stop();
+                }
+                if (released.hasHandle())
+                {
+                    released.release();
+                }
+                remote.Dispose();
+                GC.KeepAlive(remote);
+            });
+        }
+        else
+        {
+            if (stopped.hasHandle())
+            {
+                stopped.stop();
             }
-            else
+            if (released.hasHandle())
             {
                 released.release();
             }
